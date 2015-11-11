@@ -2,7 +2,7 @@
 use warnings;
 #use strict;
 #use Data::Dumper;
-#The script's main job is translate juniper ssg config to juniper srx config
+#The script's major job is that translate juniper ssg config to juniper srx config
 
 my $text;
 my $SET_POLICY;
