@@ -328,10 +328,14 @@ END {
     print @nat_addr_book;
     print "set applications application SNMP term 1 protocol udp\n";
     print "set applications application SNMP term 1 destination-port 161-162\n";
-    print "set applications application SNMP term 1 inactivity-timeout 1\n";
+    print "set applications application SNMP term 1\n";
     print "set applications application SNMP term 2 protocol tcp\n";
     print "set applications application SNMP term 2 destination-port 161-162\n";
     print "set applications application SNMP term 2 inactivity-timeout 30\n";
-    print "set applications application-set DNS application junos-dns-udp\n";
-    print "set applications application-set DNS application junos-dns-tcp\n";
+    print "set applications application DNS term t1 alg dns\n";
+    print "set applications application DNS term t1 protocol udp\n";
+    print "set applications application DNS term t1 destination-port 53\n";
+    print "set applications application DNS term t2 alg dns\n";
+    print "set applications application DNS term t2 protocol tcp\n";
+    print "set applications application DNS term t2 destination-port 53\n";
 }
