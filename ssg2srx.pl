@@ -1,49 +1,64 @@
-!/usr/bin/perl
+#!/usr/bin/perl
 use warnings;
 #use strict;
 #use Data::Dumper;
-#The script's major job is that translate juniper ssg config to juniper srx config
+#The script's main job is translate juniper ssg config to juniper srx config
 
 my $text;
 my $SET_POLICY;
 my @nat_addr_book;
 my $POLICY_ACTION;
 my %ssg_zone_interfaces;
-my $IP                  = "unit 0 family inet address";
-my $APP                 = "match application";
-my $ADDR                = "address";
-my $SNAT                = "then static-nat prefix";
-my $DADDR               = "match destination-address";
-my $DPORT               = "destination-port" ;
-my $SADDR               = "match source-address";
-my $SPORT               = "source-port" ;
-my $TO_ZONE             = "to-zone";
-my $ADDR_SET            = "address-set";
-my $ADDR_BOOK           = "address-book" ;
-my $COMMAND_NAT         = "set security nat";
-my $EXIT_STATUS         = 0;
-my $COMMAND_ZONE        = "set security zones security-zone";
-my $ZONE_SERVICE        = "host-inbound-traffic system-services all";
-my $COMMAND_ROUTE       = "set routing-options static route";
-my $COMMAND_POLICY      = "set security policies from-zone";
-my $COMMAND_APPLICATION = "set applications application";
+my $IP                      = "unit 0 family inet address";
+my $APP                     = "match application";
+my $ADDR                    = "address";
+my $SNAT                    = "then static-nat prefix";
+my $DADDR                   = "match destination-address";
+my $DPORT                   = "destination-port" ;
+my $SADDR                   = "match source-address";
+my $SPORT                   = "source-port" ;
+my $TO_ZONE                 = "to-zone";
+my $ADDR_SET                = "address-set";
+my $ADDR_BOOK               = "address-book" ;
+my $CMD_NAT                 = "set security nat";
+my $EXIT_STATUS             = 0;
+my $CMD_ZONE                = "set security zones security-zone";
+my $ZONE_SERVICE            = "host-inbound-traffic system-services all";
+my $CMD_ROUTE               = "set routing-options static route";
+my $CMD_POLICY              = "set security policies from-zone";
+my $CMD_APPLICATION         = "set applications application";
+my $CMD_DST_NAT_POOL        = "set security nat destination pool";
+my $CMD_DST_NAT_RULE_SET    = "set security nat destination rule-set";
 my %ssg_srx_services    = (
     ANY     => "any",           Any     => "any",
-    FTP     => "junos-ftp",     HTTP    => "junos-http",
-    HTTPS   => "junos-https",   IMAP    => "junos-imap",
+    FTP     => "junos-ftp",
+    HTTP    => "junos-http",    HTTPS   => "junos-https",
+    IKE     => "junos-ike",     IMAP    => "junos-imap",
     LDAP    => "junos-ldap",    MSN     => "junos-msn",
     MAIL    => "junos-mail",    NTP     => "junos-ntp",
     PING    => "junos-ping",    POP3    => "junos-pop3",
-    RTSP    => "junos-rtsp",    SMTP    => "junos-smtp",
-    SMB     => "junos-smb",     SSH     => "junos-ssh",
-    SYSLOG  => "junos-syslog",  TELNET  => "junos-telnet",
+    PPTP    => "junos-pptp",    RTSP    => "junos-rtsp",
+    RSH     => "junos-rsh",     SIP     => "junos-sip",
+    SMTP    => "junos-smtp",    SMB     => "junos-smb",
+    SSH     => "junos-ssh",     SYSLOG  => "junos-syslog",
+    TFTP    => "junos-tftp",    TELNET  => "junos-telnet",
+    WHOIS   => "junos-whois",
+    'MS-RPC-EPM'    => "junos-ms-rpc-epm",
+    'MS-RPC-ANY'    => "junos-ms-rpc",
+    'MS-RPC-any'    => "junos-ms-rpc",
     'MS-SQL'        => "junos-ms-sql",
     'ICMP-ANY'      => "junos-icmp-all",
     'ICMP-any'      => "junos-icmp-all",
+    'Internet Locator Service'  => "junos-internet-locator-service",
     'HTTP-EXT'      => "junos-http-ext",
     'Real-Media'    => "junos-realaudio",
+    'Real Media'    => "junos-realaudio",
     'SQL\*Net_V1'   => "junos-sqlnet-v1",
     'SQL\*Net_V2'   => "junos-sqlnet-v2",
+    'SQL\*Net V1'   => "junos-sqlnet-v1",
+    'SQL\*Net V2'   => "junos-sqlnet-v2",
+    'X-WINDOWS'     => "junos-x-windows",
+    "H.323"         => "junos-h323",
 );
 
 # change form like 255.255.255.0 to 24
@@ -84,7 +99,7 @@ BEGIN {
     close $config;
 
     while (<>) {
-        if (/zone/ && /interface/ && !/(HA|Null)/) { #get interface & zone relationship
+        if (/zone/ && /\binterface\b/ && !/(HA|Null)/) { #get interface & zone relationship
         # We will use hash reference here, the zone name as hash's key, a reference of array as hash's value, that point to the array of interfaces
             chomp;
             s/\"//g;
@@ -117,7 +132,7 @@ BEGIN {
                 }
             }
         }
-        elsif (/interface/ && /\bmip\b/) { #get MIP address mapping
+        elsif (/\binterface\b/ && /\bmip\b/) { #get MIP address mapping
             chomp;
             if (/255\.255\.255\.255/) {
                 my ($mip, $host) = (split/\s+/)[4, 6];
@@ -130,6 +145,12 @@ BEGIN {
                 next;
             }
         }
+        elsif (/\binterface\b/ && /\bvip\b/) {
+            chomp;
+            my ($vip, $host) = (split/\s+/)[4, -2];
+            $text =~ s#VIP\($vip\)#Host_$host#gm;
+            next;
+        }
     }
     # find each zone and print its interfaces
     foreach my $zone (sort keys %srx_zone_interfaces) {
@@ -141,8 +162,7 @@ BEGIN {
 }
 
 # replace the blank betwen two " with _, the same to &
-$text =~ s{(\"\S+?[^"])((?:\s+?)([^"]\S+?\"))+}{$1_$3}gm;
-$text =~ s{\&}{_}gm;
+$text =~ s{\&}{_}xgm;
 
 # replace the ssg's predefine services with srx's predefine applications
 while (($key, $value) = each %ssg_srx_services) {
@@ -157,50 +177,81 @@ foreach (@text) {
     my $length = scalar @code;
     if (/set service/ && /(protocol|\+)/) { #set applications
         my ($service_name, $protocol, $sport, $dport) = (split/\s+/)[2, 4, 6, 8];
-        print "$COMMAND_APPLICATION $service_name term $protocol\_$dport protocol $protocol $SPORT $sport $DPORT $dport\n";
+        $service_name =~ s/\//-/g;
+        print "$CMD_APPLICATION $service_name term $protocol\_$dport protocol $protocol $SPORT $sport $DPORT $dport\n";
         next;
     }
-    elsif (/\binterface\b/ && /\bmip\b/) { # set mip
+    elsif (/\binterface\b/ && /\bmip\b/) { # set static nat 
         my ($interface, $out_ip, $int_ip, $netmask) = (split/\s+/)[2, 4, 6, -3];
         for my $zone (sort keys %ssg_zone_interfaces) {
             for my $tmp (@{${ssg_zone_interfaces{$zone}}}) { 
                 if ($tmp eq $interface && $netmask eq "255.255.255.255") {
-                    print "$COMMAND_NAT static rule-set $zone rule $zone\_$RULE_NUM_{$zone} $DADDR $out_ip\n";
-                    print "$COMMAND_NAT static rule-set $zone rule $zone\_$RULE_NUM_{$zone} $SNAT $int_ip\n";
-                    push @nat_addr_book, "$COMMAND_ZONE $zone $ADDR_BOOK $ADDR Host_$int_ip $int_ip\n";
+                    print "$CMD_NAT static rule-set $zone rule $zone\_$RULE_NUM_{$zone} $DADDR $out_ip\n";
+                    print "$CMD_NAT static rule-set $zone rule $zone\_$RULE_NUM_{$zone} $SNAT $int_ip\n";
+                    push @nat_addr_book, "$CMD_ZONE $zone $ADDR_BOOK $ADDR Host_$int_ip $int_ip\n";
                     $RULE_NUM_{$zone}++;
                     last;
                 }
                 elsif ($tmp eq $interface && $netmask ne "255.255.255.255") {
                     my $netmask = get_netmask($netmask);
-                    print "$COMMAND_NAT static rule-set $zone rule $zone\_$RULE_NUM_{$zone} $DADDR $out_ip\/$netmask\n";
-                    print "$COMMAND_NAT static rule-set $zone rule $zone\_$RULE_NUM_{$zone} $SNAT $int_ip\/$netmask\n";
-                    push @nat_addr_book, "$COMMAND_ZONE $zone $ADDR_BOOK $ADDR Net_$int_ip $int_ip\/$netmask\n";
+                    print "$CMD_NAT static rule-set $zone rule $zone\_$RULE_NUM_{$zone} $DADDR $out_ip\/$netmask\n";
+                    print "$CMD_NAT static rule-set $zone rule $zone\_$RULE_NUM_{$zone} $SNAT $int_ip\/$netmask\n";
+                    push @nat_addr_book, "$CMD_ZONE $zone $ADDR_BOOK $ADDR Net_$int_ip $int_ip\/$netmask\n";
                     $RULE_NUM_{$zone}++;
                     last;
                 }
             }
         }
         next;
-#   } elsif (/interface/ && /vip/) {
     }
-    elsif (/\baddress\b/ && $length > 3) {      #set address & address-set
-        if (/255\.255\.255\.255/) {             # the netmask is /32
+    elsif (/\binterface\b/ && /\bvip\b/) { #set destination nat
+        my ($interface, $ext_ip, $virtual_port, $real_port, $intr_ip) = (split/\s+/)[2, 4, -3, -2, -1];
+        print "set security nat destination pool pool_$intr_ip\_$real_port\n";
+        if (/\+/) {
+            for my $zone (sort keys %ssg_zone_interfaces) {
+                for my $tmp (@{${ssg_zone_interfaces{$zone}}}) {
+                    if ($tmp eq $interface) {
+                        print "$CMD_DST_NAT_RULE_SET $zone rule $zone\_$RULE_NUM_{$zone} $DADDR $ext_ip\n"; 
+                        print "$CMD_DST_NAT_RULE_SET $zone rule $zone\_$RULE_NUM_{$zone} match $DPORT $virtual_port\n"; 
+                        print "$CMD_DST_NAT_RULE_SET $zone rule $zone\_$RULE_NUM_{$zone} then destination-nat pool pool_$intr_ip\_$real_port\n"; 
+                        $RULE_NUM_{$zone}++;
+                        last;
+                    }
+                }
+            }
+        }
+        else {
+            for my $zone (sort keys %ssg_zone_interfaces) {
+                for my $tmp (@{${ssg_zone_interfaces{$zone}}}) {
+                    if ($tmp eq $interface) {
+                        print "$CMD_DST_NAT_RULE_SET $zone from zone $zone\n"; 
+                        print "$CMD_DST_NAT_RULE_SET $zone rule $zone\_$RULE_NUM_{$zone} $DADDR $ext_ip\n"; 
+                        print "$CMD_DST_NAT_RULE_SET $zone rule $zone\_$RULE_NUM_{$zone} match $DPORT $virtual_port\n"; 
+                        print "$CMD_DST_NAT_RULE_SET $zone rule $zone\_$RULE_NUM_{$zone} then destination-nat pool pool_$intr_ip\_$real_port\n"; 
+                        $RULE_NUM_{$zone}++;
+                        last;
+                    }
+                }
+            }
+        }
+    }
+    elsif (/\baddress\b/ && $length > 3) { 	#set address & address-set
+        if (/255\.255\.255\.255/) { 		# the netmask is /32
             my ($zone, $addr_name, $ip) = (split/\s+/)[2, 3, 4];
-            print "$COMMAND_ZONE $zone $ADDR_BOOK $ADDR $addr_name $ip\n";
+            print "$CMD_ZONE $zone $ADDR_BOOK $ADDR $addr_name $ip\n";
         }
         elsif (!/(group)/ && /[0-9]{1,3}(\.[0-9]{1,3}){3}/) { #the netmask is not /32
             my ($zone, $addr_name, $ip, $netmask) = (split/\s+/)[2, 3, 4, 5];
             $netmask = get_netmask($netmask);
-            print "$COMMAND_ZONE $zone $ADDR_BOOK $ADDR $addr_name $ip\/$netmask\n";
+            print "$CMD_ZONE $zone $ADDR_BOOK $ADDR $addr_name $ip\/$netmask\n";
         }
         elsif (/group/ && /\badd\b/) { # the address group
             my ($zone, $addr_set, $addr_name) = (split/\s+/)[3, 4, -1];
-            print "$COMMAND_ZONE $zone $ADDR_BOOK $ADDR_SET $addr_set $ADDR $addr_name\n";
+            print "$CMD_ZONE $zone $ADDR_BOOK $ADDR_SET $addr_set $ADDR $addr_name\n";
         }
         elsif (!/group/ && /\w(\.\w)+/) {
             my ($zone, $addr_name, $fdnq) = (split/\s+/)[2, 3, 4];
-            print "$COMMAND_ZONE $zone $ADDR_BOOK $ADDR $addr_name dns-name $fdnq\n";
+            print "$CMD_ZONE $zone $ADDR_BOOK $ADDR $addr_name dns-name $fdnq\n";
         }
         next;
     #set policy, the most important part
@@ -208,7 +259,8 @@ foreach (@text) {
     elsif (/set policy id/ && /from/ && !/\bname\b/) {
         $EXIT_STATUS = 1; # add an switch for the action statement
         my ($policy_id, $src_zone, $dst_zone, $src_addr, $dst_addr, $service) = (split/\s+/)[3, 5, 7, 8, 9, 10];
-        $SET_POLICY = "$COMMAND_POLICY $src_zone $TO_ZONE $dst_zone policy $src_zone-to-$dst_zone-$policy_id";
+        $service =~ s/\//-/g;
+        $SET_POLICY = "$CMD_POLICY $src_zone $TO_ZONE $dst_zone policy $src_zone-to-$dst_zone-$policy_id";
         print "$SET_POLICY $SADDR $src_addr\n";
         print "$SET_POLICY $DADDR $dst_addr\n";
         print "$SET_POLICY $APP $service\n";
@@ -223,7 +275,8 @@ foreach (@text) {
     elsif (/set policy id/ && /from/ && /\bname\b/) {
         $EXIT_STATUS = 1; # add an switch for the action statement
         my ($policy_id, $policy_name, $src_zone, $dst_zone, $src_addr, $dst_addr, $service) = (split/\s+/)[3, 5, 7, 9, 10, 11, 12];
-        $SET_POLICY = "$COMMAND_POLICY $src_zone $TO_ZONE $dst_zone policy $policy_name-$policy_id";
+        $service =~ s/\//-/g;
+        $SET_POLICY = "$CMD_POLICY $src_zone $TO_ZONE $dst_zone policy $policy_name-$policy_id";
         print "$SET_POLICY $SADDR $src_addr\n";
         print "$SET_POLICY $DADDR $dst_addr\n";
         print "$SET_POLICY $APP $service\n";
@@ -247,6 +300,7 @@ foreach (@text) {
     }
     elsif ($length == 3 && /service/) {
         my $service = (split/\s+/)[-1];
+        $service =~ s/\//-/g;
         print "$SET_POLICY $APP $service\n";
         next;
     }
@@ -257,11 +311,13 @@ foreach (@text) {
     }
     elsif (/set route/ && /([0-9]{1,3}\.){3}[0-9]{1,3}/) { # set routes
         my ($droute, $gateway) = (split/\s+/)[2, 6];
-        print "$COMMAND_ROUTE $droute next-hop $gateway\n";
+        print "$CMD_ROUTE $droute next-hop $gateway\n";
         next;
     }
     elsif (/set group service/ && /\badd\b/) {
         my ($service_group_name, $service) = (split/\s+/)[3, -1];
+        $service_group_name =~ s/\//-/g;
+        $service =~ s/\//-/g;
         print "set applications application-set $service_group_name application $service\n";
         next;
     }
@@ -270,4 +326,12 @@ foreach (@text) {
 # print the nat address
 END {
     print @nat_addr_book;
+    print "set applications application SNMP term 1 protocol udp\n";
+    print "set applications application SNMP term 1 destination-port 161-162\n";
+    print "set applications application SNMP term 1 inactivity-timeout 1\n";
+    print "set applications application SNMP term 2 protocol tcp\n";
+    print "set applications application SNMP term 2 destination-port 161-162\n";
+    print "set applications application SNMP term 2 inactivity-timeout 30\n";
+    print "set applications application-set DNS application junos-dns-udp\n";
+    print "set applications application-set DNS application junos-dns-tcp\n";
 }
