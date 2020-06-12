@@ -1,7 +1,6 @@
 # ssg2srx
 
-a perl program of translate ssg config to srx config;
+a perl program of translate ssg config to srx config
 
-usage;
-
+usage:
 perl ssg2srx.pl <your ssg file>
