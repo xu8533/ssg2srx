@@ -131,63 +131,12 @@ my %zone_ip = (
 
 #determine whether a IP is in a network segment, and return corresponding zone
 sub return_ip_zone {
-    #local @Trust_nonnumeric_name = 
-    #        ("A_LINUX_DNS_2012", "A_LINUX_Kerberos_2012", 
-    #         "A_LINUX_Netdump_2012", "A_LINUX_RHN_2012",
-    #         "A_LINUX_RSMS_2012", "A_LINUX_Syslog_2012",
-    #         "A_LINUX_X11windows_2012", "backup_media",
-    #         "backup_server", "BCAP-FXMS-AIO-APP-ADAPTER",
-    #         "BCAS-CORE-AIO-APIS", "BCAS-CORE-AIO-POSP",
-    #         "BCAS-POSP-AIO-APP", "BCES-IBP-WLS-APP",
-    #         "BESB-CORE-AIO", "BESB-CORE-AIO-APP",
-    #         "BIB-MBS-TUX-FRONT", "BIS-FRONT-OUTERSVR-SZ",
-    #         "bis-middle-wls", "BIS-MIDDLE-WLS-APP-BANK",
-    #         "BIS-MIDDLE-WLS-APP-COMMON", "BPAY-BCDS-WLS-WEB",
-    #         "BPAY-UPP-CAS-AFA", "BPAY-UPP-CAS-MONITOR",
-    #         "BPAY-UPP-JAS-AFE", "BUPP-ORACLE-DB",
-    #         "CCF-CORE-WLS-APP", "CMS-CORE-WLS-APP",
-    #         "G-CHANXIAN-HOST-SF", "G-NEW-EPCIS-AAS-APP",
-    #         "G-NEW-EPCIS-AUTO-APP", "G-NEW-EPCIS-CQMS-APP",
-    #         "G-NEW-EPCIS-CSMS-APP", "G-NEW-EPCIS-FINANCE-WLS-APP",
-    #         "G-NEW-EPCIS-GQS-WLS-APP", "G-NEW-EPCIS-INTF-APP",
-    #         "G-NEW-EPCIS-MAP-APP", "G-NEW-EPCIS-PA18-APP",
-    #         "G-NEW-EPCIS-RMS-APP", "G-NEW-EPCIS-ASA-APP",
-    #         "G-NEW-EPCIS-SERVICE-WLS-APP", "G-NEW-EPCIS-SERVICE-WLS-APP-FN",
-    #         "G-NEW-FINANCE-WLS-APP", "G_Bank_Branch", "G_Bank_terminal",
-    #         "B_BuShuPingTai_Svr", "G_DC_Svr", "G_Dev_Terminal_new",
-    #         "G_dev_Terminal_Svr", "G_DNS_Svr", "G_DR_terminal",
-    #         "G_EPCIS-AUTOCLAIM-WLS-APP", "G_Front_Machine", 
-    #         "G_Front_Machine2", "G_Front_Machine3", "G_KF_terminal",
-    #         "G_MCU", "G_NM_Svr", "G_NMACS_Svr", "G_PACES-FTP",
-    #         "G_PUB_Terminal_Srv", "G_rsms_monitor",
-    #         "G_TECH_Terminal_Svr", "G_Tech_Win_Terminal_Svr", 
-    #         "GCC-IWS-WLS-APP", "ISV2-HSO32-AIO-APP",
-    #         "IVS-CPST-DEALENGINE-WEB", "IVS-CPST-DNT-APP",
-    #         "PN-CUP-TRANSACTION", "TSV2-NCM-WLS-APP", "unix_basic_client",
-    #     );
          local @Untrust_nonnumeric_name =
                 ("AMESB-CORE-WIS-APP", "EGIS-ABBS-WLS-APP", 
                  "ELIS-ABBS-WLS-APP", "ELIS-PA18-WLS-DMZWEB", 
                  "MVS-CORE-JBS-APP-VSS", "OID-SLAVE-BANK",
                  "SSO-PS-PA18", "TOA-CORE-WLS-APP",
                  "TSV2-NCM-WLS-APP", "WEBMAIL-DMZWEB-PA18",);
-            #local @DMZ2_nonnumeric_name  = 
-                #local @DMZ2_nonnumeric_name  = 
-                #       ("BCAS-CORE-APIS-FRONT", "BIB-MBS-FRONT",
-                #       "BPAY-BCDS-WLS-FRONT", "BPAY-UPP-JAS-WFE_2",
-                #       "IVS-CPST-FIX-FRONT", "PACES-KISS-AIO",
-                #       "TSV2-TRADING-SSSCC-FRONT", "A_LINUX_SERVER_2012",
-                #       "backup_client", "BCAP-FXMS-AIO-FRONT-RTNS",
-                #       "BCAS-CORE-APIS-FRONT", "BCAS-CORE-HW-NAC",
-                #       "BIS-FRONT-INTERSVR-BATCH-SH", "BPAY-BCDS-WLS-FRONT",
-                #       "BPAY-UPP-AIO-GZBEPSF", "BPAY-UPP-JAS-AFE", 
-                #       "BPAY-UPP-JAS-AFE_2", "G_DMZ2_BIS_PRD_Front",
-                #       "G_DMZ2_BIS_test_Front", "G_Linux_Svr_DMZ2",
-                #       "G_Unix_Svr_DMZ2", "G_Windows_Svr_DMZ2",
-                #       "IVS-CPST-FIX-FRONT", "TSV2-TRADING-DMZPTRAR",
-                #       );
-                #local @fwmgt_nonnumeric_name =
-                #       ("G_device_network_nat", );
          local %zone_ip_name = 
                 (#Trust      => \@Trust_nonnumeric_name, 
                     Untrust    => \@Untrust_nonnumeric_name,
