@@ -304,6 +304,11 @@ BEGIN {
 #            $text =~ s#VIP\($vip\)#Host_$host#gm;
 #            next;
 #        }
+        elsif (/policy id/ && /name/) {
+            chomp;
+            $text =~ s#name\ \"[^"]*\"##; #remove policy name, no need
+            next;
+        }
     }
     # find each zone and print its interfaces
     foreach my $zone (sort keys %srx_zone_interfaces) {
@@ -902,7 +907,7 @@ foreach (@text) {
         undef @nat_dst_addr_icmp;
     }
     #set policy, the most important part
-    if (/set policy id/ && /from/ && !/\bname\b/ && !/\bGlobal\b/) {
+    if (/set policy id/ && /from/ && !/\bGlobal\b/) {
         $POLICY_STATUS = 1; # add an switch for the action statement
         if (/\bschedule\b/) {
             if (/\blog\b/) {
@@ -957,16 +962,16 @@ foreach (@text) {
         if (/[Pp]ermit/ && /log/) {
             $POLICY_ACTION 
                 = "$SET_POLICY then permit\n" .
-                  "$SET_POLICY then log session-init\n" .
+                #"$SET_POLICY then log session-init\n" .
                   "$SET_POLICY then log session-close\n"
                   ;
         }
         elsif (/[Dd]eny/ && /log/) {
             $POLICY_ACTION 
                 = "$SET_POLICY then deny\n" .
-                  "$SET_POLICY then log session-init\n" .
-                  "$SET_POLICY then log session-close\n"
+                  "$SET_POLICY then log session-init\n" 
                   ;
+                  #"$SET_POLICY then log session-close\n"
         }
         elsif (/[Pp]ermit/) {
             $POLICY_ACTION = "$SET_POLICY then permit\n";
@@ -976,52 +981,52 @@ foreach (@text) {
         }
         next;
     }
-    elsif (/set policy id/ && /from/ && /\bname\b/ && !/\bGlobal\b/) {
-        $POLICY_STATUS = 1; # add an switch for the action statement
-        local ($policy_id, $src_zone, $dst_zone, $src_addr, $dst_addr, $service) 
-            = (split/\s+/)[3, 7, 9, 10, 11, 12];
-        if (/\bdst ip\b/ && $DST_IP_STATUS == 1) { # set dst ip address-book
-            $dst_addr = "host_$dst_real_address";
-            push @dst_ip_address_books, 
-                "set security zones security-zone $dst_zone " .
-                "address-book address $dst_addr $dst_real_address\n"
-                ;
-        }
-        $service =~ s!\/!-!g;
-        $SET_POLICY = 
-            "set $CMD_POLICY $src_zone $TO_ZONE $dst_zone policy " .
-            "$src_zone-to-$dst_zone-$policy_id"
-            ;
-        $DISABLE_POLICY 
-            = "deactive $CMD_POLICY $src_zone $TO_ZONE $dst_zone policy " .
-              "$src_zone-to-$dst_zone-$policy_id"
-              ;
-        print "$SET_POLICY $SADDR $src_addr\n";
-        print "$SET_POLICY $DADDR $dst_addr\n";
-        print "$SET_POLICY $APP $service\n";
-        if (/[Pp]ermit/ && /log/) {
-            $POLICY_ACTION 
-                = "$SET_POLICY then permit\n" .
-                  "$SET_POLICY then log session-init\n" .
-                  "$SET_POLICY then log session-close\n"
-                  ;
-        }
-        elsif (/[Dd]eny/ && /log/) {
-            $POLICY_ACTION  
-                = "$SET_POLICY then deny\n" .
-                  "$SET_POLICY then log session-init\n" .
-                  "$SET_POLICY then log session-close\n"
-                  ;
-        }
-        elsif (/[Pp]ermit/) {
-            $POLICY_ACTION = "$SET_POLICY then permit\n";
-        }
-        elsif (/[Dd]eny/) {
-            $POLICY_ACTION = "$SET_POLICY then deny\n";
-        }
-        next;
-    }
-    elsif (/set policy id/ && /from/ && !/\bname\b/ && /\bGlobal\b/) {
+    #    elsif (/set policy id/ && /from/ && /\bname\b/ && !/\bGlobal\b/) {
+    #        $POLICY_STATUS = 1; # add an switch for the action statement
+    #        local ($policy_id, $src_zone, $dst_zone, $src_addr, $dst_addr, $service) 
+    #            = (split/\s+/)[3, 7, 9, 10, 11, 12];
+    #        if (/\bdst ip\b/ && $DST_IP_STATUS == 1) { # set dst ip address-book
+    #            $dst_addr = "host_$dst_real_address";
+    #            push @dst_ip_address_books, 
+    #                "set security zones security-zone $dst_zone " .
+    #                "address-book address $dst_addr $dst_real_address\n"
+    #                ;
+    #        }
+    #        $service =~ s!\/!-!g;
+    #        $SET_POLICY = 
+    #            "set $CMD_POLICY $src_zone $TO_ZONE $dst_zone policy " .
+    #            "$src_zone-to-$dst_zone-$policy_id"
+    #            ;
+    #        $DISABLE_POLICY 
+    #            = "deactive $CMD_POLICY $src_zone $TO_ZONE $dst_zone policy " .
+    #              "$src_zone-to-$dst_zone-$policy_id"
+    #              ;
+    #        print "$SET_POLICY $SADDR $src_addr\n";
+    #        print "$SET_POLICY $DADDR $dst_addr\n";
+    #        print "$SET_POLICY $APP $service\n";
+    #        if (/[Pp]ermit/ && /log/) {
+    #            $POLICY_ACTION 
+    #                = "$SET_POLICY then permit\n" .
+    #                  "$SET_POLICY then log session-init\n" .
+    #                  "$SET_POLICY then log session-close\n"
+    #                  ;
+    #        }
+    #        elsif (/[Dd]eny/ && /log/) {
+    #            $POLICY_ACTION  
+    #                = "$SET_POLICY then deny\n" .
+    #                  "$SET_POLICY then log session-init\n" .
+    #                  "$SET_POLICY then log session-close\n"
+    #                  ;
+    #        }
+    #        elsif (/[Pp]ermit/) {
+    #            $POLICY_ACTION = "$SET_POLICY then permit\n";
+    #        }
+    #        elsif (/[Dd]eny/) {
+    #            $POLICY_ACTION = "$SET_POLICY then deny\n";
+    #        }
+    #        next;
+    #    }
+    elsif (/set policy id/ && /from/ && /\bGlobal\b/) {
         $GLOBAL_POLICY_STATUS = 1;
         my ($policy_id,  $src_zone,  $dst_zone, $src_addr, $dst_addr, $service) 
             = (split/\s+/)[3, 5, 7, 8, 9, 10];
@@ -1148,16 +1153,16 @@ foreach (@text) {
                     if (/[Pp]ermit/ && /log/) {
                         push @global_policy_action, 
                             "$SET_POLICY then permit\n" .
-                            "$SET_POLICY then log session-init\n" .
+                            #"$SET_POLICY then log session-init\n" .
                             "$SET_POLICY then log session-close\n"
                             ;
                     }
                     elsif (/[Dd]eny/ && /log/) {
                         push @global_policy_action, 
                             "$SET_POLICY then deny\n" .
-                            "$SET_POLICY then log session-init\n" .
-                            "$SET_POLICY then log session-close\n"
+                            "$SET_POLICY then log session-init\n" 
                             ;
+                            #"$SET_POLICY then log session-close\n"
                     }
                     elsif (/[Pp]ermit/) {
                         push @global_policy_action, 
@@ -1196,15 +1201,15 @@ foreach (@text) {
                 if (/[Pp]ermit/ && /log/) {
                     push @global_policy_action, 
                         "$SET_POLICY then permit\n" .
-                        "$SET_POLICY then log session-init\n" .
+                        #"$SET_POLICY then log session-init\n" .
                         "$SET_POLICY then log session-close\n"
                         ;
                 }
                 elsif (/[Dd]eny/ && /log/) {
                     push @global_policy_action, 
                         "$SET_POLICY then deny\n" .
-                        "$SET_POLICY then log session-init\n" .
-                        "$SET_POLICY then log session-close\n"
+                        "$SET_POLICY then log session-init\n" 
+                        #"$SET_POLICY then log session-close\n"
                         ;
                 }
                 elsif (/[Pp]ermit/) {
