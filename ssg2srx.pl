@@ -117,28 +117,22 @@ my %srx_application_port_number = (
     Terminal => 3389,  SNMP    => "161 to 162",
 );
 
-my @Trust = ("10.36.192.221/22", "10.0.0.0/8", "192.168.10.0/24", 
-    "172.18.0.0/16", "30.0.0.0/12", "30.16.92.42/32", "30.0.0.0/8",
-    "29.3.0.0/16", "29.2.0.0/16",
-);
+my @Trust = ("192.168.200.0/24",);
 
-my @DMZ  = ("56.16.71.22/32", "56.16.71.57/32", "56.16.71.183/32",
-);
+my @Untrust = ("10.0.0.0/8",);
+
+#my @DMZ  = ("56.16.71.22/32", "56.16.71.57/32", "56.16.71.183/32",
+#);
 
 my %zone_ip = (
-        Trust   =>  \@Trust,    'DMZ' =>  \@DMZ,
+        Trust   =>  \@Trust,    'Untrust' =>  \@Untrust,
 ); 
 
 #determine whether a IP is in a network segment, and return corresponding zone
 sub return_ip_zone {
-         local @Untrust_nonnumeric_name =
-                ("AMESB-CORE-WIS-APP", "EGIS-ABBS-WLS-APP", 
-                 "ELIS-ABBS-WLS-APP", "ELIS-PA18-WLS-DMZWEB", 
-                 "MVS-CORE-JBS-APP-VSS", "OID-SLAVE-BANK",
-                 "SSO-PS-PA18", "TOA-CORE-WLS-APP",
-                 "TSV2-NCM-WLS-APP", "WEBMAIL-DMZWEB-PA18",);
+         local @Untrust_nonnumeric_name = ();
          local %zone_ip_name = 
-                (#Trust      => \@Trust_nonnumeric_name, 
+                (   Trust      => \@Trust_nonnumeric_name, 
                     Untrust    => \@Untrust_nonnumeric_name,
                     #'DMZ-2'    => \@DMZ2_nonnumeric_name,
              ); 
