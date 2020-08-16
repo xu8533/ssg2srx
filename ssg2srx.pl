@@ -2,6 +2,8 @@
 use warnings;
 #use strict;
 use Data::Dumper;
+use Scalar::Util qw(looks_like_number);
+use NetAddr::IP;
 #The major aim of the script is translate juniper's ssg config to juniper srx config
 
 # define variable
@@ -75,6 +77,7 @@ my $ZONE_SERVICE            = "host-inbound-traffic system-services all";
 my %srx_zone_interfaces; # save the srx's zone and interfaces mapping
 my %ssg_srx_interfaces;  # save the ssg's zone and interfaces mapping
 my %zone_network;        # save zone, network segment, netmask
+my %tmp_ssg_interface_zone; # save ssg interface and zone temp;
 my %ssg_srx_services        = (
     ANY     => "any",           Any     => "any",
     FTP     => "junos-ftp",
@@ -117,25 +120,8 @@ my %srx_application_port_number = (
     Terminal => 3389,  SNMP    => "161 to 162",
 );
 
-my @Trust = ("192.168.200.0/24",);
-
-my @Untrust = ("10.0.0.0/8",);
-
-#my @DMZ  = ("56.16.71.22/32", "56.16.71.57/32", "56.16.71.183/32",
-#);
-
-my %zone_ip = (
-        Trust   =>  \@Trust,    'Untrust' =>  \@Untrust,
-); 
-
 #determine whether a IP is in a network segment, and return corresponding zone
 sub return_ip_zone {
-         local @Untrust_nonnumeric_name = ();
-         local %zone_ip_name = 
-                (   Trust      => \@Trust_nonnumeric_name, 
-                    Untrust    => \@Untrust_nonnumeric_name,
-                    #'DMZ-2'    => \@DMZ2_nonnumeric_name,
-             ); 
     local $test_ip_zone;
     local $real_ip = "@_";    
     $real_ip    = (split/\//, $real_ip)[0];
@@ -244,6 +230,7 @@ BEGIN {
             print "Please enter a replacement of $ssg_interface:";
             chomp (my $srx_interface = <STDIN>); # get new interface from user's input
             $ssg_srx_interfaces{ $ssg_interface } = $srx_interface;
+            $tmp_ssg_interface_zone{ $ssg_interface } = $zone;
             # test the zone exists?
             if (exists $srx_zone_interfaces{ $zone }) {
                 push @{"srx_$zone"}, $srx_interface;
@@ -265,9 +252,11 @@ BEGIN {
             for my $tmp (keys %ssg_srx_interfaces) {
                 while ($tmp eq $interface) {
                     my ($tmp_srx_interface, $unit) = split/\./, $ssg_srx_interfaces{$interface};
+                    my $tmp_zone = $tmp_ssg_interface_zone{ $interface };
+                    push (@{ $zone_ip{ $tmp_zone }}, $ip); #save interface network to relative zone
                     #print "set interfaces $ssg_srx_interfaces{$interface} ".
                     #       "unit 0 family inet address $ip\n";
-                       print "set interfaces $tmp_srx_interface ".
+                    print "set interfaces $tmp_srx_interface ".
                            "unit $unit family inet address $ip\n";
                     last START;
                 }
@@ -277,12 +266,12 @@ BEGIN {
             chomp;
             if (/255\.255\.255\.255/) {
                 my ($mip, $host) = (split/\s+/)[4, 6];
-                #$text =~ s#MIP\($mip\)#Host_$host#gm; #replace nat's virtual address with it's real address
+                $text =~ s#MIP\($mip\)#Host_$host#gm; #replace nat's virtual address with it's real address
                 $mip_address_pairs{ "$mip" } = $host;
             }
             else {
                 my ($mip, $net) = (split/\s+/)[4, 6];
-                #$text =~ s#MIP\($mip\)#Net_$net#gm; #replace nat's virtual address with it's real address
+                $text =~ s#MIP\($mip\)#Net_$net#gm; #replace nat's virtual address with it's real address
                 $mip_address_pairs{ "$mip" } = $net;
             }
             next;
@@ -306,7 +295,14 @@ BEGIN {
 #        }
         elsif (/policy id/ && /name/) {
             chomp;
-            $text =~ s#name\ \"[^"]*\"##; #remove policy name, no need
+            $text =~ s#name\ \"[^"]*\"##gm; #remove ssg policy name, just use policy id
+            print "policy name replaced\n";
+            next;
+        }
+        elsif (/set route/ && /interface/) {
+            my ($route_net, $route_interface) = (split/\s+/)[2, 4]; 
+            $tmp_zone = $tmp_ssg_interface_zone{ $route_interface };
+            push (@{$zone_ip{$tmp_zone}}, $route_net);
             next;
         }
     }
@@ -322,8 +318,7 @@ BEGIN {
     }
 }
 
-# replace the blank betwen two " with _, the same to &
-#$text =~ s{\&}{_}xgm;
+                    print Dumper(%zone_ip);
 
 # replace the ssg's predefine services with srx's predefine applications
 while (($key, $value) = each %ssg_srx_services) {
