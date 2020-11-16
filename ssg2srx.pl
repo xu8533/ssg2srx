@@ -4,6 +4,14 @@ use warnings;
 use Data::Dumper;
 use Scalar::Util qw(looks_like_number);
 use NetAddr::IP;
+use Net::IP::LPM;
+use Getopt::Std;
+use Cwd 'abs_path';
+use File::Basename;
+use Excel::Writer::XLSX;
+use vars qw($opt_c);
+use v5.10.1;
+use DateTime::Format::Flexible;
 #The major aim of the script is translate juniper's ssg config to juniper srx config
 
 # define variable
@@ -23,6 +31,8 @@ my $dst_real_zone;
 my $policy_id_icmp;
 my $src_real_zone;
 my $src_zone_icmp;
+my $workbook;
+my $worksheet;
 my @destination_nat;
 my @destination_nat_icmp;
 my @destination_nat_zone;
@@ -74,6 +84,8 @@ my $SNAT                    = "then static-nat prefix";
 my $SPORT                   = "source-port" ;
 my $TO_ZONE                 = "to-zone";
 my $ZONE_SERVICE            = "host-inbound-traffic system-services all";
+my $row                     = 0;         # "compare excel cell number"
+my $lpm;
 my %srx_zone_interfaces; # save the srx's zone and interfaces mapping
 my %ssg_srx_interfaces;  # save the ssg's zone and interfaces mapping
 my %zone_network;        # save zone, network segment, netmask
@@ -93,7 +105,7 @@ my %ssg_srx_services        = (
     SMTP    => "junos-smtp",    SMB     => "junos-smb",
     SSH     => "junos-ssh",     SYSLOG  => "junos-syslog",
     TFTP    => "junos-tftp",    TELNET  => "junos-telnet",
-    WHOIS   => "junos-whois",
+    WHOIS   => "junos-whois",   WINFRAME    => "junos-winframe",
     'MS-RPC-EPM'    => "junos-ms-rpc-epm",
     'MS-RPC-ANY'    => "junos-ms-rpc",
     'MS-RPC-any'    => "junos-ms-rpc",
@@ -192,19 +204,28 @@ sub get_netmask {
 }
 
 #get zone and network relationship
-foreach my $zone (keys %zone_ip) {
-    for my $i (0..$#{$zone_ip{ $zone }}) {
-        my $dec = $zone_ip{ $zone }[ $i ];
-        chomp $dec;
-        my ($ip, $netmask) = (split/\//, $dec);
-        my $ipbit          = unpack("B32", pack("C4", (split/\./, $ip)));
-        my $netbit         = substr("$ipbit", 0, "$netmask");
-        push  @{$zone_network{ $zone }}, [$netbit, $netmask];
-    }
-}
+#foreach my $zone (keys %zone_ip) {
+#    for my $i (0..$#{$zone_ip{ $zone }}) {
+#        my $dec = $zone_ip{ $zone }[ $i ];
+#        chomp $dec;
+#        my ($ip, $netmask) = (split/\//, $dec);
+#        my $ipbit          = unpack("B32", pack("C4", (split/\./, $ip)));
+#        my $netbit         = substr("$ipbit", 0, "$netmask");
+#        push  @{$zone_network{ $zone }}, [$netbit, $netmask];
+#    }
+#}
+
 
 #The BEGIN part process some staff
 BEGIN {
+    $lpm = Net::IP::LPM->new();  #class for longest prefix match
+
+    if ($#ARGV < 0 || $#ARGV > 5) { die "\nUsage:\tperl ssg2srx.pl [-c <compare-file.xlsx>] <config.file>\n
+        Flags:\t-c file for compare between ssg and srx configuration\n"; }
+    
+    #getopts('c:', \%options); save options to hash %options
+    getopts('c:');  #save options to Getopt::Std side effect sets $opt_*
+
     if (system("/usr/bin/dos2unix $ARGV[0]") != 0) {
         print "command failed!: dos2unix:\n";
         exit;
@@ -258,6 +279,7 @@ BEGIN {
                     #       "unit 0 family inet address $ip\n";
                     print "set interfaces $tmp_srx_interface ".
                            "unit $unit family inet address $ip\n";
+                    $lpm->add( $ip, $tmp_zone );
                     last START;
                 }
             }
@@ -296,13 +318,14 @@ BEGIN {
         elsif (/policy id/ && /name/) {
             chomp;
             $text =~ s#name\ \"[^"]*\"##gm; #remove ssg policy name, just use policy id
-            print "policy name replaced\n";
+            #print "policy name replaced\n";
             next;
         }
         elsif (/set route/ && /interface/) {
             my ($route_net, $route_interface) = (split/\s+/)[2, 4]; 
             $tmp_zone = $tmp_ssg_interface_zone{ $route_interface };
             push (@{$zone_ip{$tmp_zone}}, $route_net);
+            $lpm->add( $route_net, $tmp_zone );
             next;
         }
     }
@@ -318,15 +341,22 @@ BEGIN {
     }
 }
 
-                    print Dumper(%zone_ip);
-
 # replace the ssg's predefine services with srx's predefine applications
 while (($key, $value) = each %ssg_srx_services) {
     $text =~ s/\b$key\b/$value/gm;
 }
 
-#print Dumper(\%ssg_zone_interfaces);
+if (defined $opt_c) {
+    print "Creating excel for compare...\n"; 
+    $workbook = Excel::Writer::XLSX->new( $opt_c ) or die "Can't open excel as $!\n";
+    $worksheet = $workbook->add_worksheet( 'ssg&&srx' ) or die "Can't open excel table ssg&&srx\n";
+} 
+else {
+    print "compare not needed\n";
+}
+
 my @text = split(/\n/, $text);
+
 foreach (@text) {
     s#\"##g;
     my @code = split/\s+/;
@@ -334,10 +364,57 @@ foreach (@text) {
     if (/set service/ && /(protocol|\+)/) { #set applications
         my ($service_name, $protocol, $sport, $dport) 
             = (split/\s+/)[2, 4, 6, 8];
+        $worksheet->write( $row, 0, "$_" ) if ( defined $opt_c ); #ssg config write to A column;
         $service_name =~ s!\/!-!g;
         print "$CMD_APPLICATION $service_name term $protocol\_$dport ".
               "protocol $protocol $SPORT $sport $DPORT $dport\n";
+        $worksheet->write( $row, 1, "$CMD_APPLICATION $service_name term $protocol\_$dport protocol $protocol $SPORT $sport $DPORT $dport" ) if ( defined $opt_c ); #srx config write to B column;
+        $row++;
         next;
+    }
+    elsif (/\bset scheduler\b/) { 
+        $worksheet->write( $row, 0, "$_" ) if ( defined $opt_c ); #ssg config write to A column;
+        local @schedulers = split(/ /, $_);
+        given ( $schedulers[3] ) {
+            when ("once") {
+                local $start_date = $schedulers[5];
+                local $start_time = $schedulers[6];
+                local $stop_date  = $schedulers[8];
+                local $stop_time  = $schedulers[9];
+                if ( $start_date =~ m!\b(\d\/\d\/\d{4})\b!) {
+                    $start_date =~ s#(\d)\/(\d)\/(\d{4})#0$1\/0$2\/$3#;
+                }
+                elsif ( $start_date =~ m!\b(\d\/\d{2}\/\d{4})\b!) {
+                    $start_date =~ s#(\d)\/(\d{2})\/(\d{4})#0$1\/$2\/$3#;
+                }
+                if ( $stop_date =~ m!\b(\d\/\d\/\d{4})\b!) {
+                    $stop_date =~ s#(\d)\/(\d)\/(\d{4})#0$1\/0$2\/$3#;
+                }
+                elsif ( $stop_date =~ m!\b(\d\/\d{2}\/\d{4})\b!) {
+                    $stop_date =~ s#(\d)\/(\d{2})\/(\d{4})#0$1\/$2\/$3#;
+                }
+                $start_date = DateTime::Format::Flexible->parse_datetime("$start_date $start_time");
+                $stop_date  = DateTime::Format::Flexible->parse_datetime("$stop_date $stop_time");
+                $start_date =~ s/T/\./;
+                $stop_date  =~ s/T/\./;
+                print "set schedulers scheduler $schedulers[2] start-date $start_date stop-date $stop_date\n";
+                $worksheet->write( $row, 1, "set schedulers scheduler $schedulers[2] start-date $start_date stop-date $stop_date" ) if ( defined $opt_c ); #srx config write to B column;
+                $row++;
+                next;
+            }
+            when ("recurrent") {
+                local $some_day   = $schedulers[4];
+                local $start_time = $schedulers[6];
+                local $stop_time  = $schedulers[8];
+                $start_time = DateTime::Format::Flexible->parse_datetime( $start_time );
+                $stop_time  = DateTime::Format::Flexible->parse_datetime( $stop_time );
+                $start_time =~ s#.*T(.*)#$1#;
+                $stop_time  =~ s#.*T(.*)#$1#;
+                print "set schedulers scheduler $schedulers[2] start-time $start_time stop-time $stop_time\n";
+                $worksheet->write( $row, 1, "set schedulers scheduler $schedulers[2] start-time $start_time stop-time $stop_time" ) if ( defined $opt_c ); #srx config write to B column;
+                $row++;
+            }
+        }
     }
     elsif (/\binterface\b/ && /\bmip\b/) { # set static nat rule
         my ($interface, $out_ip, $int_ip, $netmask) 
@@ -353,31 +430,40 @@ foreach (@text) {
                     print "$CMD_NAT static rule-set $zone\_$temp_srx_interface " .
                           "rule $zone\_$RULE_NUM_{ $zone } " .
                           "$SNAT $int_ip\n";
-                          my $mip_real_zone = return_ip_zone($int_ip);
-                          push @mip_address_books, 
-                              "$CMD_ZONE $mip_real_zone $ADDR_BOOK $ADDR " .
-                              "Host_$int_ip $int_ip\n";
+                          #my $mip_real_zone = return_ip_zone($int_ip);
+                    my $mip_real_zone = $lpm->lookup($int_ip);
+                    push @mip_address_books, 
+                        "$CMD_ZONE $mip_real_zone $ADDR_BOOK $ADDR " .
+                        "Host_$int_ip $int_ip\n";
+                    $worksheet->write( $row, 0, "$_" ) if ( defined $opt_c );
+                    $worksheet->write( $row, 1, "" ) if ( defined $opt_c );
+                    $row++;
                     $RULE_NUM_{ $zone }++;
                     last;
                 }
                 elsif (($tmp eq $interface) && ($netmask ne "255.255.255.255")) {
                     my $netmask = get_netmask($netmask);
                     print "$CMD_NAT static rule-set $zone\_$temp_srx_interface " .
-                          "rule $zone\_$RULE_NUM_{ $zone } " .
-                          "$DADDR $out_ip\/$netmask\n"
-                          ;
+                        "rule $zone\_$RULE_NUM_{ $zone } " .
+                        "$DADDR $out_ip\/$netmask\n"
+                        ;
                     print "$CMD_NAT static rule-set $zone\_$temp_srx_interface " .
-                          "rule $zone\_$RULE_NUM_{ $zone } " .
-                          "$SNAT $int_ip\/$netmask\n"
-                          ;
-                    foreach $mip_other_zone (@global_zones) {
-                        if ($mip_other_zone ne $zone) {
-                            push @mip_address_books, 
-                                "$CMD_ZONE $mip_other_zone $ADDR_BOOK " .
-                                "$ADDR Host_$int_ip $int_ip\n"
-                                ;
-                        }
-                    }
+                        "rule $zone\_$RULE_NUM_{ $zone } " .
+                        "$SNAT $int_ip\/$netmask\n"
+                        ;
+                    $mip_other_zone = $lpm->lookup($int_ip);
+                    push @mip_address_books, 
+                        "$CMD_ZONE $mip_other_zone $ADDR_BOOK " .
+                        "$ADDR Host_$int_ip $int_ip\n"
+                        ;
+                          #foreach $mip_other_zone (@global_zones) {
+                          #    if ($mip_other_zone ne $zone) {
+                          #        push @mip_address_books, 
+                          #            "$CMD_ZONE $mip_other_zone $ADDR_BOOK " .
+                          #            "$ADDR Host_$int_ip $int_ip\n"
+                          #            ;
+                          #    }
+                          #}
                     $RULE_NUM_{ $zone }++;
                     last;
                 }
@@ -390,41 +476,65 @@ foreach (@text) {
         if (/255\.255\.255\.255/ && !/(group)/) { 		# the netmask is /32
             my ($zone, $addr_name, $ip) = (split/\s+/)[2, 3, 4];
             print "$CMD_ZONE $zone $ADDR_BOOK $ADDR $addr_name $ip\n";
+            $worksheet->write( $row, 0, "$_" ) if ( defined $opt_c );
+            $worksheet->write( $row, 1, "$CMD_ZONE $zone $ADDR_BOOK $ADDR $addr_name $ip") if ( defined $opt_c );
+            $row++;
         }
         elsif (!/(group)/ && /\d{1,3}(\.\d{1,3}){3}/) { #the netmask is not /32
             my ($zone, $addr_name, $ip, $netmask) = (split/\s+/)[2, 3, 4, 5];
             $netmask = get_netmask($netmask);
             print "$CMD_ZONE $zone $ADDR_BOOK $ADDR " .
                   "$addr_name $ip\/$netmask\n";
+            $worksheet->write( $row, 0, "$_" ) if ( defined $opt_c );
+            $worksheet->write( $row, 1, "$CMD_ZONE $zone $ADDR_BOOK".
+                               "$ADDR $addr_name $ip\/$netmask") if ( defined $opt_c );
+            $row++;
         }
         elsif (/group/ && /\badd\b/) { # the address group
             my ($zone, $addr_set, $addr_name) = (split/\s+/)[3, 4, -1];
             print "$CMD_ZONE $zone $ADDR_BOOK $ADDR_SET $addr_set " .
                   "$ADDR $addr_name\n";
+            $worksheet->write( $row, 0, "$_" ) if ( defined $opt_c );
+            $worksheet->write( $row, 1, "$CMD_ZONE $zone $ADDR_BOOK ".
+                               "$ADDR_SET $addr_set $ADDR $addr_name") if ( defined $opt_c );
+            $row++;
         }
         elsif (!/group/ && /\w(\.\w)+/) {
             my ($zone, $addr_name, $fdnq) = (split/\s+/)[2, 3, 4];
             print "$CMD_ZONE $zone $ADDR_BOOK $ADDR $addr_name " .
                   "dns-name $fdnq\n";
+            $worksheet->write( $row, 0, "$_" ) if ( defined $opt_c );
+            $worksheet->write( $row, 1, "$CMD_ZONE $zone $ADDR_BOOK".
+                               "$ADDR $addr_name dns-name $fdnq") if ( defined $opt_c );
+            $row++;
         }
         next;
     }
     elsif (/\baddress\b/ && $length > 3 && /\bGlobal\b/) {
         if (!/(group)/ && /255\.255\.255\.255/) { 		# the netmask is /32
-           my ($addr_name, $ip) = (split/\s+/)[3, 4];
-           if (exists $mip_address_pairs{ $ip }) {
-               $ip = $mip_address_pairs{ $ip };
-               $addr_name = "Host_$ip";
-           }
-           $zone = return_ip_zone($ip);
-           print "$CMD_ZONE $zone $ADDR_BOOK $ADDR $addr_name $ip\n";
+            my ($addr_name, $ip) = (split/\s+/)[3, 4];
+            if (exists $mip_address_pairs{ $ip }) {
+                $ip = $mip_address_pairs{ $ip };
+                $addr_name = "Host_$ip";
+            }
+            #$zone = return_ip_zone($ip);
+            $zone = $lpm->lookup($ip);
+            print "$CMD_ZONE $zone $ADDR_BOOK $ADDR $addr_name $ip\n";
+            $worksheet->write( $row, 0, "$_" ) if ( defined $opt_c );
+            $worksheet->write( $row, 1, "$CMD_ZONE $zone $ADDR_BOOK $ADDR $addr_name $ip") if ( defined $opt_c );
+            $row++;
         }
         elsif (!/(group)/ && /\d{1,3}(\.\d{1,3}){3}/) { #the netmask is not /32
             my ($addr_name, $ip, $netmask) = (split/\s+/)[3, 4, 5];
-            $zone = return_ip_zone($ip);
+            #$zone = return_ip_zone($ip);
+            $zone = $lpm->lookup($ip);
             $netmask = get_netmask($netmask);
             print "$CMD_ZONE $zone $ADDR_BOOK $ADDR " .
                   "$addr_name $ip\/$netmask\n";
+            $worksheet->write( $row, 0, "$_" ) if ( defined $opt_c );
+            $worksheet->write( $row, 1,  "$CMD_ZONE $zone $ADDR_BOOK $ADDR " .
+                  "$addr_name $ip\/$netmask") if ( defined $opt_c );
+            $row++;
         }
         elsif (/group/ && /\badd\b/) { # the address group
             my ($addr_set, $addr_name) = (split/\s+/)[4, -1];
@@ -434,24 +544,38 @@ foreach (@text) {
                 $ip = $mip_address_pairs{ $ip };
                 $addr_name = "Host_$ip";
             }
-            $zone = return_ip_zone($addr_name);
+            #$zone = return_ip_zone($addr_name);
+            $zone = $lpm->lookup($addr_name);
             print "$CMD_ZONE $zone $ADDR_BOOK $ADDR_SET " .
                   "$addr_set $ADDR $addr_name\n";
+            $worksheet->write( $row, 0, "$_" ) if ( defined $opt_c );
+            $worksheet->write( $row, 1, "$CMD_ZONE $zone $ADDR_BOOK $ADDR_SET " .
+                  "$addr_set $ADDR $addr_name") if ( defined $opt_c );
+            $row++;
         }
         elsif (!/group/ && /\w(\.\w)+/) {
             my ($addr_name, $fdnq) = (split/\s+/)[3, 4];
-            $zone = return_ip_zone($fdnq);
+            #$zone = return_ip_zone($fdnq);
+            $zone = $lpm->lookup($fdnq);
             print "$CMD_ZONE $zone $ADDR_BOOK $ADDR " .
                   "$addr_name dns-name $fdnq\n";
+            $worksheet->write( $row, 0, "$_" ) if ( defined $opt_c );
+            $worksheet->write( $row, 1, "$CMD_ZONE $zone $ADDR_BOOK $ADDR " .
+                  "$addr_name dns-name $fdnq") if ( defined $opt_c );
+            $row++;
         }
         next;
     }
     elsif (/set group service/ && /\badd\b/) {
+        $worksheet->write( $row, 0, "$_" ) if ( defined $opt_c );
         my ($service_group_name, $service) = (split/\s+/)[3, -1];
         $service_group_name =~ s!\/!-!g;
         $service =~ s!\/!-!g;
         print "set applications application-set $service_group_name " .
               "application $service\n";
+        $worksheet->write( $row, 1, "set applications application-set " .
+            "$service_group_name application $service") if ( defined $opt_c );
+        $row++;
         next;
     }
     elsif (/\bnat src\b/ && !/\bdip-id\b/ && !/\bGlobal\b/) { # set nat source interface
@@ -837,8 +961,7 @@ foreach (@text) {
         }
         push @destination_nat, 
             "$CMD_NAT destination pool host_$dst_pool_name " .
-            "address $dst_real_address\n"
-            ;
+            "address $dst_real_address\n";
         $DST_IP_ACTION 
             = "$CMD_NAT destination rule-set $src_zone rule dst-$dst_ip_id";
         push @destination_nat_zone, 
@@ -909,19 +1032,27 @@ foreach (@text) {
                 local ($policy_id, $src_zone, $dst_zone, $scheduler_name) 
                     = (split/\s+/)[3, 5, 7, -2];
                 print "set $CMD_POLICY $src_zone $TO_ZONE $dst_zone policy " .
-                    "$src_zone-to-$dst_zone-$policy_id scheduler-name $scheduler_name\n"
+                    "$src_zone-to-$dst_zone-$policy_id scheduler-name $scheduler_name\n";
+                $worksheet->write( $row, 0, "$_\n" ) if ( defined $opt_c );
+                $worksheet->write( $row, 1, "set $CMD_POLICY $src_zone $TO_ZONE " .
+                                   "$dst_zone policy $src_zone-to-$dst_zone-$policy_id " .
+                                   "scheduler-name $scheduler_name" ) if ( defined $opt_c );
             }
             else {
                 local ($policy_id, $src_zone, $dst_zone, $scheduler_name) 
                     = (split/\s+/)[3, 5, 7, -1];
                 print "set $CMD_POLICY $src_zone $TO_ZONE $dst_zone policy " .
-                    "$src_zone-to-$dst_zone-$policy_id scheduler-name $scheduler_name\n"
+                    "$src_zone-to-$dst_zone-$policy_id scheduler-name $scheduler_name\n";
+                $worksheet->write( $row, 0, "$_" ) if ( defined $opt_c );
+                $worksheet->write( $row, 1, "set $CMD_POLICY $src_zone $TO_ZONE " .
+                                   "$dst_zone policy $src_zone-to-$dst_zone-$policy_id " .
+                                   "scheduler-name $scheduler_name") if ( defined $opt_c );
             } 
         }
         local ($policy_id, $src_zone, $dst_zone, $src_addr, $dst_addr, $service) 
             = (split/\s+/)[3, 5, 7, 8, 9, 10];
-        $dst_addr    =~ /(\d{1,3}(?:\.\d{1,3}){3})/;
-        local $nat_test_ip   = $&;
+        $dst_addr =~ /(\d{1,3}(?:\.\d{1,3}){3})/;
+        local $nat_test_ip = $&;
         if (exists $mip_address_pairs{ $nat_test_ip }) {
             $MIP_EXIST = 1;
             $dst_addr = "Host_$mip_address_pairs{ $nat_test_ip }";
@@ -931,41 +1062,42 @@ foreach (@text) {
             $dst_addr = "host_$dst_real_address";
             push @dst_ip_address_books, 
                 "set security zones security-zone $dst_zone " .
-                "address-book address $dst_addr $dst_real_address\n"
-                ;
+                "address-book address $dst_addr $dst_real_address\n";
         }
         elsif (/\bdst ip\b/ && $MIP_EXIST == 1) { 
             # set dst ip address-book
             $dst_real_addr = "host_$dst_real_address";
             push @dst_ip_address_books, 
                 "set security zones security-zone $dst_zone " .
-                "address-book address $dst_real_addr $dst_real_address\n"
-                ;
+                "address-book address $dst_real_addr $dst_real_address\n";
         }
         $service =~ s!\/!-!g;
         $SET_POLICY 
             = "set $CMD_POLICY $src_zone $TO_ZONE $dst_zone policy " .
-              "$src_zone-to-$dst_zone-$policy_id"
-              ;
+              "$src_zone-to-$dst_zone-$policy_id";
         $DISABLE_POLICY 
             = "deactive $CMD_POLICY $src_zone $TO_ZONE $dst_zone policy " .
-              "$src_zone-to-$dst_zone-$policy_id"
-              ;
+              "$src_zone-to-$dst_zone-$policy_id";
+
         print "$SET_POLICY $SADDR $src_addr\n";
         print "$SET_POLICY $DADDR $dst_addr\n";
         print "$SET_POLICY $APP $service\n";
+
+        $worksheet->write( $row, 0, "$_" ) if ( defined $opt_c );
+        $worksheet->write( $row, 1, "$SET_POLICY $SADDR $src_addr\n".
+                           "$SET_POLICY $DADDR $dst_addr\n".
+                           "$SET_POLICY $APP $service\n") if ( defined $opt_c );
+
         if (/[Pp]ermit/ && /log/) {
             $POLICY_ACTION 
-                = "$SET_POLICY then permit\n" .
+                 = "$SET_POLICY then log session-close\n" .
+                   "$SET_POLICY then permit\n";
                 #"$SET_POLICY then log session-init\n" .
-                  "$SET_POLICY then log session-close\n"
-                  ;
         }
         elsif (/[Dd]eny/ && /log/) {
             $POLICY_ACTION 
-                = "$SET_POLICY then deny\n" .
-                  "$SET_POLICY then log session-init\n" 
-                  ;
+                 = "$SET_POLICY then log session-init\n" .
+                   "$SET_POLICY then deny\n";
                   #"$SET_POLICY then log session-close\n"
         }
         elsif (/[Pp]ermit/) {
@@ -976,51 +1108,6 @@ foreach (@text) {
         }
         next;
     }
-    #    elsif (/set policy id/ && /from/ && /\bname\b/ && !/\bGlobal\b/) {
-    #        $POLICY_STATUS = 1; # add an switch for the action statement
-    #        local ($policy_id, $src_zone, $dst_zone, $src_addr, $dst_addr, $service) 
-    #            = (split/\s+/)[3, 7, 9, 10, 11, 12];
-    #        if (/\bdst ip\b/ && $DST_IP_STATUS == 1) { # set dst ip address-book
-    #            $dst_addr = "host_$dst_real_address";
-    #            push @dst_ip_address_books, 
-    #                "set security zones security-zone $dst_zone " .
-    #                "address-book address $dst_addr $dst_real_address\n"
-    #                ;
-    #        }
-    #        $service =~ s!\/!-!g;
-    #        $SET_POLICY = 
-    #            "set $CMD_POLICY $src_zone $TO_ZONE $dst_zone policy " .
-    #            "$src_zone-to-$dst_zone-$policy_id"
-    #            ;
-    #        $DISABLE_POLICY 
-    #            = "deactive $CMD_POLICY $src_zone $TO_ZONE $dst_zone policy " .
-    #              "$src_zone-to-$dst_zone-$policy_id"
-    #              ;
-    #        print "$SET_POLICY $SADDR $src_addr\n";
-    #        print "$SET_POLICY $DADDR $dst_addr\n";
-    #        print "$SET_POLICY $APP $service\n";
-    #        if (/[Pp]ermit/ && /log/) {
-    #            $POLICY_ACTION 
-    #                = "$SET_POLICY then permit\n" .
-    #                  "$SET_POLICY then log session-init\n" .
-    #                  "$SET_POLICY then log session-close\n"
-    #                  ;
-    #        }
-    #        elsif (/[Dd]eny/ && /log/) {
-    #            $POLICY_ACTION  
-    #                = "$SET_POLICY then deny\n" .
-    #                  "$SET_POLICY then log session-init\n" .
-    #                  "$SET_POLICY then log session-close\n"
-    #                  ;
-    #        }
-    #        elsif (/[Pp]ermit/) {
-    #            $POLICY_ACTION = "$SET_POLICY then permit\n";
-    #        }
-    #        elsif (/[Dd]eny/) {
-    #            $POLICY_ACTION = "$SET_POLICY then deny\n";
-    #        }
-    #        next;
-    #    }
     elsif (/set policy id/ && /from/ && /\bGlobal\b/) {
         $GLOBAL_POLICY_STATUS = 1;
         my ($policy_id,  $src_zone,  $dst_zone, $src_addr, $dst_addr, $service) 
@@ -1096,12 +1183,14 @@ foreach (@text) {
                 local $nat_test_ip   = $&;
                 if (exists $mip_address_pairs{ $nat_test_ip }) {
                     $MIP_EXIST = 1;
+                    #$dst_real_zone = return_ip_zone($dst_addr);
+                    $dst_real_zone = $lpm->lookup( $mip_address_pairs{ $nat_test_ip } );
                     $dst_addr = "Host_$mip_address_pairs{ $nat_test_ip }";
-                    $dst_real_zone = return_ip_zone($dst_addr);
                 }
                 elsif ($MIP_EXIST == 0) { 
+                    $dst_real_zone = $lpm->lookup($dst_addr);
                     $dst_addr = "host_$dst_real_address";
-                    $dst_real_zone = return_ip_zone($dst_addr);
+                    #$dst_real_zone = return_ip_zone($dst_addr);
                     push @dst_ip_address_books, 
                         "set security zones security-zone $dst_real_zone " .
                         "address-book address $dst_addr " .
@@ -1109,8 +1198,9 @@ foreach (@text) {
                         ;
                 }
                 elsif ($MIP_EXIST == 1) { 
+                    #$dst_real_zone = return_ip_zone($dst_real_addr);
+                    $dst_real_zone = $lpm->lookup($dst_real_addr);
                     $dst_real_addr = "host_$dst_real_address";
-                    $dst_real_zone = return_ip_zone($dst_real_addr);
                     push @dst_ip_address_books, 
                         "set security zones security-zone $dst_real_zone " .
                         "address-book address $dst_real_addr " .
@@ -1124,10 +1214,12 @@ foreach (@text) {
                 local $nat_test_ip   = $&;
                 #print "nat test ip is $nat_test_ip\n";
                 if (exists $mip_address_pairs{ $nat_test_ip }) {
-                    $dst_addr = "Host_$mip_address_pairs{ $nat_test_ip }";
+                    #$dst_addr = "Host_$mip_address_pairs{ $nat_test_ip }";
+                    $dst_addr = $mip_address_pairs{ $nat_test_ip };
                 }
                 #print "dst addr is $dst_addr\n";
-                $dst_real_zone = return_ip_zone($dst_addr);
+                $dst_real_zone = $lpm->lookup($dst_addr);
+                $dst_addr = "Host_$dst_addr";
             }
             if (@dst_real_zones) {
                 foreach my $dst_real_zone (@dst_real_zones) {
@@ -1222,13 +1314,14 @@ foreach (@text) {
     elsif (/set policy id/ && /disable/ && $GLOBAL_POLICY_STATUS == 0) {
         $POLICY_ACTION 
             = "$POLICY_ACTION\n" .
-              "$DISABLE_POLICY\n"
-              ;
+              "$DISABLE_POLICY\n";
         next;
     }
     elsif ($length == 3 && /src-address/ && $GLOBAL_POLICY_STATUS == 0) {
         my $src_addr = (split/\s+/)[-1];
         print "$SET_POLICY $SADDR $src_addr\n";
+        $worksheet->write( $row, 0, "$_\n" ) if ( defined $opt_c );
+        $worksheet->write( $row, 1, "$SET_POLICY $SADDR $src_addr\n" ) if ( defined $opt_c );
         next;
     }
     elsif ($length == 3 && /dst-address/ && $DST_IP_STATUS == 0 && $GLOBAL_POLICY_STATUS == 0) {
@@ -1239,6 +1332,8 @@ foreach (@text) {
             $dst_addr = "Host_$mip_address_pairs{ $nat_test_ip }";
         }
         print "$SET_POLICY $DADDR $dst_addr\n";
+        $worksheet->write( $row, 0, "$_\n" ) if ( defined $opt_c );
+        $worksheet->write( $row, 1, "$SET_POLICY $DADDR $dst_addr\n") if ( defined $opt_c );
         next;
     }
     elsif ($length == 3 && /dst-address/ && $DST_IP_STATUS == 1 && $GLOBAL_POLICY_STATUS == 0) {
@@ -1248,30 +1343,38 @@ foreach (@text) {
         if (exists $mip_address_pairs{ $nat_test_ip }) {
             $dst_addr = "Host_$mip_address_pairs{ $nat_test_ip }";
             print "$SET_POLICY $DADDR $dst_addr\n";
+            $worksheet->write( $row, 0, "$_\n" ) if ( defined $opt_c );
+            $worksheet->write( $row, 1, "$SET_POLICY $DADDR $dst_addr\n" ) if ( defined $opt_c );
         }
         else {
             print "$SET_POLICY $DADDR host_$dst_real_address\n";
+            $worksheet->write( $row, 0, "$_\n" ) if ( defined $opt_c );
+            $worksheet->write( $row, 1, "$SET_POLICY $DADDR host_$dst_real_address\n" ) if ( defined $opt_c );
         }
         next;
     }
     elsif ($length == 3 && /service/ && $GLOBAL_POLICY_STATUS == 0) {
         my $service = (split/\s+/)[-1];
+        $worksheet->write( $row, 0, "$_\n" ) if ( defined $opt_c );
         $service =~ s!\/!-!g;
         print "$SET_POLICY $APP $service\n";
+        $worksheet->write( $row, 1, "$SET_POLICY $APP $service\n" ) if ( defined $opt_c );
         next;
     }
     elsif (/exit/ && $POLICY_STATUS == 1 && $GLOBAL_POLICY_STATUS == 0) { # check the switch, and confirm is on
         print "$POLICY_ACTION";
+        $worksheet->write( $row, 0, "$_" ) if ( defined $opt_c );
+        $worksheet->write( $row, 1, "$POLICY_ACTION" ) if ( defined $opt_c );
         $POLICY_STATUS = 0; # turn off the switch
         $DST_IP_STATUS = 0; # turn off the switch
         $MIP_EXIST     = 0;
+        $row++;
         next;
     }
     elsif (/set policy id/ && /disable/ && $GLOBAL_POLICY_STATUS == 1) {
         $POLICY_ACTION 
             = "$POLICY_ACTION\n" .
-              "$DISABLE_POLICY\n"
-              ;
+              "$DISABLE_POLICY\n";
         next;
     }
     elsif ($length == 3 && /src-address/ && $GLOBAL_POLICY_STATUS == 1) {
@@ -1286,9 +1389,11 @@ foreach (@text) {
             $dst_addr    =~ /(\d{1,3}(?:\.\d{1,3}){3})/;
             local $nat_test_ip   = $&;
             if (exists $mip_address_pairs{ $nat_test_ip }) {
-               $dst_addr = "Host_$mip_address_pairs{ $nat_test_ip }";
+                #$dst_addr = "Host_$mip_address_pairs{ $nat_test_ip }";
+               $dst_addr = $mip_address_pairs{ $nat_test_ip };
             } 
-            $dst_real_zone = return_ip_zone($dst_addr);
+            $dst_real_zone = $lpm->lookup($dst_addr);
+            $dst_addr = "Host_$dst_addr";
             local $dst_address_book = $dst_addr;
             $dst_address_book =~ 
                  s#(?:\D+[_-]){0,}(\d{1,3}(?:\.\d{1,3}){3}(?:/\d{0,2})?)#$1#g;
@@ -1316,8 +1421,9 @@ foreach (@text) {
             $dst_addr    =~ /(\d{1,3}(?:\.\d{1,3}){3})/;
             local $nat_test_ip   = $&;
             if (exists $mip_address_pairs{ $nat_test_ip }) { #dst address is mip address
+               $dst_real_zone = $lpm->lookup($mip_address_pairs{ $nat_test_ip });
                $dst_addr = "Host_$mip_address_pairs{ $nat_test_ip }";
-               $dst_real_zone = return_ip_zone($dst_addr);
+               #$dst_real_zone = return_ip_zone($dst_addr);
                local $dst_address_book = $dst_addr;
                $dst_address_book =~ 
                    s#(?:\D+[_-]){0,}(\d{1,3}(?:\.\d{1,3}){3}(?:/\d{0,2})?)#$1#g;
@@ -1338,7 +1444,8 @@ foreach (@text) {
                push @global_dst_address, $dst_addr;
             }
             else {                                         #dst address is no mip address
-                $dst_real_zone = return_ip_zone($dst_real_address);
+                #$dst_real_zone = return_ip_zone($dst_real_address);
+                $dst_real_zone = $lpm->lookup($dst_real_address);
                 #local $dst_address_book = $dst_real_addr;
                 #$dst_address_book =~ 
                 #    s#(?:\D+[_-]?){0,}(\d{1,3}(?:\.\d{1,3}){3}(?:/\d{0,2})?)#$1#g;
@@ -1410,10 +1517,17 @@ foreach (@text) {
             my ($droute, $gateway, $preference) = (split/\s+/)[2, 6, 8];
             print "$CMD_ROUTE $droute next-hop $gateway " .
                   "preference $preference\n";
+            $worksheet->write( $row, 0, "$_" ) if ( defined $opt_c );
+            $worksheet->write( $row, 1, "$CMD_ROUTE $droute next-hop $gateway " .
+                               "preference $preference\n" ) if ( defined $opt_c );
+            $row++;
         }
         else {
             my ($droute, $gateway) = (split/\s+/)[2, 6];
             print "$CMD_ROUTE $droute next-hop $gateway\n";
+            $worksheet->write( $row, 0, "$_" ) if ( defined $opt_c );
+            $worksheet->write( $row, 1, "$CMD_ROUTE $droute next-hop $gateway" ) if ( defined $opt_c );
+            $row++;
         }
         next;
     }
@@ -1422,10 +1536,17 @@ foreach (@text) {
             my ($droute, $gateway, $preference) = (split/\s+/)[2, 4, 6];
             print "$CMD_ROUTE $droute next-hop $gateway " .
                   "preference $preference\n";
+            $worksheet->write( $row, 0, "$_" ) if ( defined $opt_c );
+            $worksheet->write( $row, 1, "$CMD_ROUTE $droute next-hop $gateway " .
+                  "preference $preference" ) if ( defined $opt_c );
+            $row++;
         }
         else {
             my ($droute, $gateway) = (split/\s+/)[2, 4];
             print "$CMD_ROUTE $droute next-hop $gateway\n";
+            $worksheet->write( $row, 0, "$_" ) if ( defined $opt_c );
+            $worksheet->write( $row, 1, "$CMD_ROUTE $droute next-hop $gateway" ) if ( defined $opt_c );
+            $row++;
         }
         next;
     }
@@ -1434,14 +1555,22 @@ foreach (@text) {
             my ($droute, $gateway, $preference) = (split/\s+/)[2, 4, 6];
             print "$CMD_ROUTE $droute next-hop $gateway " .
                   "preference $preference\n";
+            $worksheet->write( $row, 0, "$_" ) if ( defined $opt_c );
+            $worksheet->write( $row, 1, "$CMD_ROUTE $droute next-hop $gateway " .
+                  "preference $preference" ) if ( defined $opt_c );
+            $row++;
         }
         else {
             my ($droute, $gateway) = (split/\s+/)[2, 4];
             print "$CMD_ROUTE $droute next-hop $gateway\n";
+            $worksheet->write( $row, 0, "$_" ) if ( defined $opt_c );
+            $worksheet->write( $row, 1, "$CMD_ROUTE $droute next-hop $gateway" ) if ( defined $opt_c );
+            $row++;
         }
         next;
     }
 }
+$workbook->close();
 
 # the last jobs
 END {
