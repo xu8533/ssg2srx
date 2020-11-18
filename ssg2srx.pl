@@ -31,6 +31,8 @@ my $dst_real_zone;
 my $policy_id_icmp;
 my $src_real_zone;
 my $src_zone_icmp;
+my $ssg_format; 
+my $srx_fromat; #excel cell format
 my $workbook;
 my $worksheet;
 my @destination_nat;
@@ -53,6 +55,8 @@ my @service;
 my @source_nat;
 my @source_nat_icmp;
 my @source_nat_zone;
+my @ssg_compare_config;
+my @srx_compare_config;
 my %dip_pool;
 my %mip_address_pairs;
 my %ssg_zone_interfaces;
@@ -266,7 +270,8 @@ BEGIN {
             }
             next;
         }
-        elsif (!/unset/ && /\binterface\b/ && /\bip\b/ && !/\bdip\b/ && /(?:\d{1,3}\.){3}\d{1,3}/) {
+        #elsif (!/unset/ && /\binterface\b/ && /\bip\b/ && !/\bdip\b/ && /(?:\d{1,3}\.){3}\d{1,3}/) {
+        elsif (/\bset\b/ && /\binterface\b/ && /\bip\b/ && !/\bdip\b/ && /(?:\d{1,3}\.){3}\d{1,3}/) {
             chomp;
             my ($interface, $ip) = (split/\s+/)[2, 4];
             START:
@@ -321,7 +326,7 @@ BEGIN {
             #print "policy name replaced\n";
             next;
         }
-        elsif (/set route/ && /interface/) {
+        elsif (/set route/ && /interface/ && !/\bsource\b/) {
             my ($route_net, $route_interface) = (split/\s+/)[2, 4]; 
             $tmp_zone = $tmp_ssg_interface_zone{ $route_interface };
             push (@{$zone_ip{$tmp_zone}}, $route_net);
@@ -349,6 +354,12 @@ while (($key, $value) = each %ssg_srx_services) {
 if (defined $opt_c) {
     print "Creating excel for compare...\n"; 
     $workbook = Excel::Writer::XLSX->new( $opt_c ) or die "Can't open excel as $!\n";
+    $ssg_format = $workbook->add_format();
+    $srx_format = $workbook->add_format();
+    $ssg_format->set_color( 'green' );
+    $ssg_format->set_align( 'left' );
+    $srx_format->set_color( 'blue' );
+    $srx_format->set_align( 'left' );
     $worksheet = $workbook->add_worksheet( 'ssg&&srx' ) or die "Can't open excel table ssg&&srx\n";
 } 
 else {
@@ -1033,20 +1044,20 @@ foreach (@text) {
                     = (split/\s+/)[3, 5, 7, -2];
                 print "set $CMD_POLICY $src_zone $TO_ZONE $dst_zone policy " .
                     "$src_zone-to-$dst_zone-$policy_id scheduler-name $scheduler_name\n";
-                $worksheet->write( $row, 0, "$_\n" ) if ( defined $opt_c );
-                $worksheet->write( $row, 1, "set $CMD_POLICY $src_zone $TO_ZONE " .
-                                   "$dst_zone policy $src_zone-to-$dst_zone-$policy_id " .
-                                   "scheduler-name $scheduler_name" ) if ( defined $opt_c );
+                push @ssg_compare_config, "$_\n";
+                push @srx_compare_config, "set $CMD_POLICY $src_zone $TO_ZONE " .
+                         "$dst_zone policy $src_zone-to-$dst_zone-$policy_id " .
+                         "scheduler-name $scheduler_name\n";
             }
             else {
                 local ($policy_id, $src_zone, $dst_zone, $scheduler_name) 
                     = (split/\s+/)[3, 5, 7, -1];
                 print "set $CMD_POLICY $src_zone $TO_ZONE $dst_zone policy " .
                     "$src_zone-to-$dst_zone-$policy_id scheduler-name $scheduler_name\n";
-                $worksheet->write( $row, 0, "$_" ) if ( defined $opt_c );
-                $worksheet->write( $row, 1, "set $CMD_POLICY $src_zone $TO_ZONE " .
-                                   "$dst_zone policy $src_zone-to-$dst_zone-$policy_id " .
-                                   "scheduler-name $scheduler_name") if ( defined $opt_c );
+                push @ssg_compare_config, "$_\n";
+                push @srx_compare_config, "set $CMD_POLICY $src_zone $TO_ZONE " .
+                         "$dst_zone policy $src_zone-to-$dst_zone-$policy_id " .
+                         "scheduler-name $scheduler_name\n";
             } 
         }
         local ($policy_id, $src_zone, $dst_zone, $src_addr, $dst_addr, $service) 
@@ -1083,10 +1094,9 @@ foreach (@text) {
         print "$SET_POLICY $DADDR $dst_addr\n";
         print "$SET_POLICY $APP $service\n";
 
-        $worksheet->write( $row, 0, "$_" ) if ( defined $opt_c );
-        $worksheet->write( $row, 1, "$SET_POLICY $SADDR $src_addr\n".
-                           "$SET_POLICY $DADDR $dst_addr\n".
-                           "$SET_POLICY $APP $service\n") if ( defined $opt_c );
+        push @ssg_compare_config, "$_\n";
+        push @srx_compare_config, "$SET_POLICY $SADDR $src_addr\n".
+                 "$SET_POLICY $DADDR $dst_addr\n$SET_POLICY $APP $service\n";
 
         if (/[Pp]ermit/ && /log/) {
             $POLICY_ACTION 
@@ -1313,15 +1323,15 @@ foreach (@text) {
     }
     elsif (/set policy id/ && /disable/ && $GLOBAL_POLICY_STATUS == 0) {
         $POLICY_ACTION 
-            = "$POLICY_ACTION\n" .
-              "$DISABLE_POLICY\n";
+            = "$POLICY_ACTION $DISABLE_POLICY\n";
+        push @ssg_compare_config, "$_\n";
         next;
     }
     elsif ($length == 3 && /src-address/ && $GLOBAL_POLICY_STATUS == 0) {
         my $src_addr = (split/\s+/)[-1];
         print "$SET_POLICY $SADDR $src_addr\n";
-        $worksheet->write( $row, 0, "$_\n" ) if ( defined $opt_c );
-        $worksheet->write( $row, 1, "$SET_POLICY $SADDR $src_addr\n" ) if ( defined $opt_c );
+        push @ssg_compare_config, "$_\n";
+        push @srx_compare_config, "$SET_POLICY $SADDR $src_addr\n"; 
         next;
     }
     elsif ($length == 3 && /dst-address/ && $DST_IP_STATUS == 0 && $GLOBAL_POLICY_STATUS == 0) {
@@ -1332,8 +1342,8 @@ foreach (@text) {
             $dst_addr = "Host_$mip_address_pairs{ $nat_test_ip }";
         }
         print "$SET_POLICY $DADDR $dst_addr\n";
-        $worksheet->write( $row, 0, "$_\n" ) if ( defined $opt_c );
-        $worksheet->write( $row, 1, "$SET_POLICY $DADDR $dst_addr\n") if ( defined $opt_c );
+        push @ssg_compare_config, "$_\n";
+        push @srx_compare_config, "$SET_POLICY $DADDR $dst_addr\n";
         next;
     }
     elsif ($length == 3 && /dst-address/ && $DST_IP_STATUS == 1 && $GLOBAL_POLICY_STATUS == 0) {
@@ -1343,13 +1353,13 @@ foreach (@text) {
         if (exists $mip_address_pairs{ $nat_test_ip }) {
             $dst_addr = "Host_$mip_address_pairs{ $nat_test_ip }";
             print "$SET_POLICY $DADDR $dst_addr\n";
-            $worksheet->write( $row, 0, "$_\n" ) if ( defined $opt_c );
-            $worksheet->write( $row, 1, "$SET_POLICY $DADDR $dst_addr\n" ) if ( defined $opt_c );
+            push @ssg_compare_config, "$_\n";
+            push @srx_compare_config, "$SET_POLICY $DADDR $dst_addr\n";
         }
         else {
             print "$SET_POLICY $DADDR host_$dst_real_address\n";
-            $worksheet->write( $row, 0, "$_\n" ) if ( defined $opt_c );
-            $worksheet->write( $row, 1, "$SET_POLICY $DADDR host_$dst_real_address\n" ) if ( defined $opt_c );
+            push @ssg_compare_config, "$_\n";
+            push @srx_compare_config, "$SET_POLICY $DADDR host_$dst_real_address\n";
         }
         next;
     }
@@ -1358,23 +1368,33 @@ foreach (@text) {
         $worksheet->write( $row, 0, "$_\n" ) if ( defined $opt_c );
         $service =~ s!\/!-!g;
         print "$SET_POLICY $APP $service\n";
-        $worksheet->write( $row, 1, "$SET_POLICY $APP $service\n" ) if ( defined $opt_c );
+        push @ssg_compare_config, "$_\n";
+        push @srx_compare_config, "$SET_POLICY $APP $service\n"; 
         next;
     }
     elsif (/exit/ && $POLICY_STATUS == 1 && $GLOBAL_POLICY_STATUS == 0) { # check the switch, and confirm is on
         print "$POLICY_ACTION";
-        $worksheet->write( $row, 0, "$_" ) if ( defined $opt_c );
-        $worksheet->write( $row, 1, "$POLICY_ACTION" ) if ( defined $opt_c );
+        push @ssg_compare_config, "$_";
+        push @srx_compare_config, "$POLICY_ACTION";
+        @ssg_compare_config = join ( "", @ssg_compare_config );
+        @srx_compare_config = join ( "", @srx_compare_config );
+
+        $worksheet->write( $row, 0, @ssg_compare_config, $ssg_format ) if ( defined $opt_c );
+        $worksheet->write( $row, 1, @srx_compare_config, $srx_format ) if ( defined $opt_c );
         $POLICY_STATUS = 0; # turn off the switch
         $DST_IP_STATUS = 0; # turn off the switch
         $MIP_EXIST     = 0;
         $row++;
+        undef @ssg_compare_config;
+        undef @srx_compare_config;
         next;
     }
     elsif (/set policy id/ && /disable/ && $GLOBAL_POLICY_STATUS == 1) {
         $POLICY_ACTION 
             = "$POLICY_ACTION\n" .
               "$DISABLE_POLICY\n";
+        push @ssg_compare_config, "$_\n";
+        push @srx_compare_config, "$POLICY_ACTION";
         next;
     }
     elsif ($length == 3 && /src-address/ && $GLOBAL_POLICY_STATUS == 1) {
@@ -1511,15 +1531,14 @@ foreach (@text) {
         undef @global_disable_policy;
         next;
     }
-    #elsif (/set route/ && /([0-9]{1,3}\.){3}[0-9]{1,3}/ && /) { # set routes
-    elsif (/\bset route\b/ && /\binterface\b/ && /\bgateway\b/) {
+    elsif (/\bset route\b/ && /\binterface\b/ && /\bgateway\b/ && !/\bsource\b/) {
         if (/\bpreference\b/) {
             my ($droute, $gateway, $preference) = (split/\s+/)[2, 6, 8];
             print "$CMD_ROUTE $droute next-hop $gateway " .
                   "preference $preference\n";
             $worksheet->write( $row, 0, "$_" ) if ( defined $opt_c );
             $worksheet->write( $row, 1, "$CMD_ROUTE $droute next-hop $gateway " .
-                               "preference $preference\n" ) if ( defined $opt_c );
+                               "preference $preference" ) if ( defined $opt_c );
             $row++;
         }
         else {
@@ -1531,7 +1550,7 @@ foreach (@text) {
         }
         next;
     }
-    elsif (/\bset route\b/ && /\binterface\b/) {
+    elsif (/\bset route\b/ && /\binterface\b/ && /\bsource\b/) {
         if (/\bpreference\b/) {
             my ($droute, $gateway, $preference) = (split/\s+/)[2, 4, 6];
             print "$CMD_ROUTE $droute next-hop $gateway " .
@@ -1550,7 +1569,7 @@ foreach (@text) {
         }
         next;
     }
-    elsif (/\bset route\b/ && /\bgateway\b/) {
+    elsif (/\bset route\b/ && /\bgateway\b/ && /\bsource\b/) {
         if (/\bpreference\b/) {
             my ($droute, $gateway, $preference) = (split/\s+/)[2, 4, 6];
             print "$CMD_ROUTE $droute next-hop $gateway " .
