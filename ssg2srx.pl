@@ -11,6 +11,7 @@ use Getopt::Long;
 use Cwd 'abs_path';
 use File::Basename;
 use Excel::Writer::XLSX;
+use Spreadsheet::Read;
 use DateTime::Format::Flexible;
 
 #The major goal of the script is translate juniper's ssg config to juniper srx config
@@ -102,57 +103,59 @@ my %srx_zone_interfaces;       # save the srx's zone and interfaces mapping
 my %ssg_srx_interfaces;        # save the ssg's zone and interfaces mapping
 my %zone_network;              # save zone, network segment, netmask
 my %tmp_ssg_interface_zone;    # save ssg interface and zone temp;
-my $regexp_ip        = qr/(\d{1,3}(?:\.\d{1,3}){3})/ix;
-my %ssg_srx_services = (
-    ANY          => "any",
-    Any          => "any",
-    FTP          => "junos-ftp",
-    HTTP         => "junos-http",
-    HTTPS        => "junos-https",
-    IKE          => "junos-ike",
-    IMAP         => "junos-imap",
-    LDAP         => "junos-ldap",
-    MSN          => "junos-msn",
-    MAIL         => "junos-mail",
-    NBDS         => "junos-nbds",
-    NBNAME       => "junos-nbname",
-    NTP          => "junos-ntp",
-    PING         => "junos-ping",
-    POP3         => "junos-pop3",
-    PPTP         => "junos-pptp",
-    RADIUS       => "junos-radius",
-    RTSP         => "junos-rtsp",
-    RSH          => "junos-rsh",
-    SIP          => "junos-sip",
-    SMTP         => "junos-smtp",
-    SMB          => "junos-smb",
-    SSH          => "junos-ssh",
-    SYSLOG       => "junos-syslog",
-    TFTP         => "junos-tftp",
-    TELNET       => "junos-telnet",
-    WHOIS        => "junos-whois",
-    WINFRAME     => "junos-winframe",
-    'MS-RPC-EPM' => "junos-ms-rpc-epm",
-    'MS-RPC-ANY' => "junos-ms-rpc",
-    'MS-RPC-any' => "junos-ms-rpc",
-    'MS-SQL'     => "junos-ms-sql",
+my $regexp_ip = qr/(\d{1,3}(?:\.\d{1,3}){3})/ix;
+my %ssg_srx_services;          # save ssg and srx predefineed service mapping
 
-    #'ICMP-ANY'      => "junos-icmp-all",
-    #'ICMP-any'      => "junos-icmp-all",
-    'ICMP-ANY'                 => "junos-ping",
-    'ICMP-any'                 => "junos-ping",
-    'HTTP-EXT'                 => "junos-http-ext",
-    'Real-Media'               => "junos-realaudio",
-    'Real Media'               => "junos-realaudio",
-    'SQL\*Net_V1'              => "junos-sqlnet-v1",
-    'SQL\*Net_V2'              => "junos-sqlnet-v2",
-    'SQL\*Net V1'              => "junos-sqlnet-v1",
-    'SQL\*Net V2'              => "junos-sqlnet-v2",
-    'SQL Monitor'              => "junos-sql-monitor",
-    'X-WINDOWS'                => "junos-x-windows",
-    "H.323"                    => "junos-h323",
-    'Internet Locator Service' => "junos-internet-locator-service",
-);
+# = (
+#     ANY          => "any",
+#     Any          => "any",
+#     FTP          => "junos-ftp",
+#     HTTP         => "junos-http",
+#     HTTPS        => "junos-https",
+#     IKE          => "junos-ike",
+#     IMAP         => "junos-imap",
+#     LDAP         => "junos-ldap",
+#     MSN          => "junos-msn",
+#     MAIL         => "junos-mail",
+#     NBDS         => "junos-nbds",
+#     NBNAME       => "junos-nbname",
+#     NTP          => "junos-ntp",
+#     PING         => "junos-ping",
+#     POP3         => "junos-pop3",
+#     PPTP         => "junos-pptp",
+#     RADIUS       => "junos-radius",
+#     RTSP         => "junos-rtsp",
+#     RSH          => "junos-rsh",
+#     SIP          => "junos-sip",
+#     SMTP         => "junos-smtp",
+#     SMB          => "junos-smb",
+#     SSH          => "junos-ssh",
+#     SYSLOG       => "junos-syslog",
+#     TFTP         => "junos-tftp",
+#     TELNET       => "junos-telnet",
+#     WHOIS        => "junos-whois",
+#     WINFRAME     => "junos-winframe",
+#     'MS-RPC-EPM' => "junos-ms-rpc-epm",
+#     'MS-RPC-ANY' => "junos-ms-rpc",
+#     'MS-RPC-any' => "junos-ms-rpc",
+#     'MS-SQL'     => "junos-ms-sql",
+#
+#'ICMP-ANY'      => "junos-icmp-all",
+#'ICMP-any'      => "junos-icmp-all",
+#     'ICMP-ANY'                 => "junos-ping",
+#     'ICMP-any'                 => "junos-ping",
+#     'HTTP-EXT'                 => "junos-http-ext",
+#     'Real-Media'               => "junos-realaudio",
+#     'Real Media'               => "junos-realaudio",
+#     'SQL\*Net_V1'              => "junos-sqlnet-v1",
+#     'SQL\*Net_V2'              => "junos-sqlnet-v2",
+#     'SQL\*Net V1'              => "junos-sqlnet-v1",
+#     'SQL\*Net V2'              => "junos-sqlnet-v2",
+#     'SQL Monitor'              => "junos-sql-monitor",
+#     'X-WINDOWS'                => "junos-x-windows",
+#     "H.323"                    => "junos-h323",
+#     'Internet Locator Service' => "junos-internet-locator-service",
+# );
 my %srx_application_port_number = (
     http     => 80,
     https    => 443,
@@ -241,10 +244,6 @@ binmode( STDERR, ":encoding(gbk)" );
 
 #The BEGIN part process some staff
 BEGIN {
-    if ( system "/usr/bin/dos2unix", $ARGV[0] ) {
-        print "command failed!: dos2unix:\n";
-        exit;
-    }
 
     sub usage {
         my $err = shift and select STDERR;
@@ -264,13 +263,32 @@ BEGIN {
         "i|index:i"   => \$opt_i,             # ":"表示可有可无的参数
         "n|nets:s@"   => \$opt_n,             # "@"表示接收多个参数
         "o|output:s"  => \$opt_o,
-        "s|service:s" => \$opt_s,             # "="表示强制参数
+        "s|service=s" => \$opt_s,             # "="表示强制参数
     ) or usage(1);
 
+    if ( system "/usr/bin/dos2unix", $ARGV[0] ) {
+        print "command failed!: dos2unix:\n";
+        exit;
+    }
+
     open my $config, '<', $ARGV[0]
-      or die "can't open file:$!\n";          #open the config filehandle
+      or die "can't open file:$!\n";    #open the config filehandle
     $text = do { local $/; <$config> };
     close $config;
+
+    # init %ssg_srx_services
+    my $services_file = Spreadsheet::Read->new($opt_s)
+      or die "无法打开$opt_s";
+
+    my $sheet = $services_file->sheet("sheet1");
+
+    # 读取exel每一行数据，并创建services哈希表
+    foreach my $row ( $sheet->{minrow} .. $sheet->{maxrow} ) {
+        my @data = $sheet->cellrow($row);
+        $data[0]  =~ s/\s+$//;
+        $data[-1] =~ s/\s+$//;
+        $ssg_srx_services{ $data[0] } = $data[-1];
+    }
 
     while (<>) {
         chomp;
@@ -454,6 +472,7 @@ foreach (@text) {
     s#\"##g;
     chomp;
 
+    # print "$_\n";
     # print "this line is $_\n";
     my @code   = split /\s+/;
     my $length = scalar @code;
@@ -499,11 +518,12 @@ foreach (@text) {
                     "$stop_date $stop_time");
                 $start_date =~ s/T/\./;
                 $stop_date  =~ s/T/\./;
-                print
-"set schedulers scheduler $schedulers[2] start-date $start_date stop-date $stop_date\n";
+                print "set schedulers scheduler $schedulers[2] "
+                  . "start-date $start_date stop-date $stop_date\n";
                 $worksheet->write( $row, 1,
-"set schedulers scheduler $schedulers[2] start-date $start_date stop-date $stop_date"
-                ) if ( defined $opt_c );    #srx config write to B column;
+                        "set schedulers scheduler $schedulers[2] "
+                      . "start-date $start_date stop-date $stop_date" )
+                  if ( defined $opt_c );    #srx config write to B column;
                 $row++;
                 next;
             }
@@ -518,11 +538,12 @@ foreach (@text) {
                   DateTime::Format::Flexible->parse_datetime($stop_time);
                 $start_time =~ s#.*T(.*)#$1#;
                 $stop_time  =~ s#.*T(.*)#$1#;
-                print
-"set schedulers scheduler $schedulers[2] start-time $start_time stop-time $stop_time\n";
+                print "set schedulers scheduler $schedulers[2] "
+                  . "start-time $start_time stop-time $stop_time\n";
                 $worksheet->write( $row, 1,
-"set schedulers scheduler $schedulers[2] start-time $start_time stop-time $stop_time"
-                ) if ( defined $opt_c );    #srx config write to B column;
+                        "set schedulers scheduler $schedulers[2] "
+                      . "start-time $start_time stop-time $stop_time" )
+                  if ( defined $opt_c );    #srx config write to B column;
                 $row++;
             }
         }
