@@ -271,7 +271,7 @@ BEGIN {
             next;
         }
         #elsif (!/unset/ && /\binterface\b/ && /\bip\b/ && !/\bdip\b/ && /(?:\d{1,3}\.){3}\d{1,3}/) {
-        elsif (/\bset\b/ && /\binterface\b/ && /\bip\b/ && !/\bdip\b/ && /(?:\d{1,3}\.){3}\d{1,3}/) {
+        elsif (/\bset\b/ && /\binterface\b/ && /\bip\b/ && !/\bdip\b/ && /(?:\d{1,3}\.){3}\d{1,3}/ && !/\btunnel.*\b/) {
             chomp;
             my ($interface, $ip) = (split/\s+/)[2, 4];
             START:
