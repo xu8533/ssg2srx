@@ -180,8 +180,7 @@ BEGIN {
     # 读取ssg和srx服务映射
     if ($opt_s) {
 
-        # my $services_file = ReadData( $opt_s, parser => "XLSX", strip => 3 )
-        # my $sheet = $services_file->{"ssg2srx"};
+        # 读取excel内容，并删除单元格前导和末尾空格
         my $services_file = Spreadsheet::Read->new( $opt_s, strip => 3 )
           or die "无法打开$opt_s";
         my $sheet = $services_file->sheet("ssg2srx");
