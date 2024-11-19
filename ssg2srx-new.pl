@@ -1,20 +1,19 @@
 #!/usr/bin/perl
 
-# use Getopt::Std;
 # use Scalar::Util qw(looks_like_number);
 # use Cwd 'abs_path';
 # use Excel::Writer::XLSX;
-use warnings;
 use strict;
+use warnings;
 use NetAddr::IP;
 use Net::IP::LPM;
-use Data::Dumper;
 use Getopt::Long;
 use File::Basename;
+use Spreadsheet::Read;
+use Lingua::Han::PinYin;
 use DateTime::Format::Flexible;
 use Regexp::Common qw(net);
-use Lingua::Han::PinYin;
-use Spreadsheet::Read;
+use Data::Dumper   qw(Dumper);
 
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 # rewrite ssg2srx.pl                                                                        #
@@ -30,7 +29,7 @@ my %lpm_pairs;               # 保存路由/ip与zone的映射关系，供lpm使
 my %services;                # 保存ssg服务名与srx服务名的映射关系
 
 # 保存命令选项值
-our ( $opt_c, $opt_o, $opt_s ) = '';
+our ( $opt_c, $opt_d, $opt_o, $opt_s ) = '';
 
 # 保存ssg接口与srx接口和zone的映射关系
 my %zones_interfaces;
@@ -173,23 +172,23 @@ BEGIN {
     GetOptions(
         "help|h"      => sub { usage(0); },
         "c|config:s"  => \$opt_c,
+        "d|compare:s" => \$opt_d,
         "o|output:s"  => \$opt_o,
         "s|service=s" => \$opt_s,
     ) or usage(1);
 
     # 读取ssg和srx服务映射
     if ($opt_s) {
-        my $services_file = ReadData( $opt_s, parser => "xlsx" )
-          or die "无法打开$opt_s";
 
-        print "ok\n\n\n";
+        # my $services_file = ReadData( $opt_s, parser => "XLSX", strip => 3 )
+        # my $sheet = $services_file->{"ssg2srx"};
+        my $services_file = Spreadsheet::Read->new( $opt_s, strip => 3 )
+          or die "无法打开$opt_s";
         my $sheet = $services_file->sheet("ssg2srx");
 
         # 读取exel每一行数据，并创建services哈希表
         foreach my $row ( $sheet->{minrow} .. $sheet->{maxrow} ) {
             my @data = $sheet->cellrow($row);
-            $data[0]  =~ s/\s+$//;
-            $data[-1] =~ s/\s+$//;
             $services{ $data[0] } = $data[-1];
         }
     }
@@ -217,7 +216,6 @@ BEGIN {
       or die "can't open file:$!\n";
     my $tmp_ssg_config_file = do { local $/; <$config> };
     close $config;
-
     @ssg_config_file = split( /\n/, $tmp_ssg_config_file );
 
     # 删除空行
