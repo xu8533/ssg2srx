@@ -36,12 +36,20 @@ my %zones_interfaces;
 
 # %zones_interfaces=>{
 #     zone1=>[
-#          { ssg接口1=>srx接口1 }
-#          { ssg接口2=>srx接口2 }
+#               { ssg接口1=>
+#                    { srx接口1=> ip }
+#               }
+#               { ssg接口2=>
+#                    srx接口2 => ip}
+#               }
 #            ]
 #     zone2=>[
-#          { ssg接口3=>srx接口3 }
-#          { ssg接口4=>srx接口4 }
+#               { ssg接口3=>
+#                    {srx接口3 => ip}
+#               }
+#               { ssg接口4=>
+#                    srx接口4 => ip}
+#               }
 #            ]
 # }
 
@@ -102,6 +110,11 @@ sub set_zone_interface {
     # return $zone, %ssg_srx_interfaces;
 }
 
+# 设置接口模式
+sub set_interface_mode {
+    my $ssg_config_line = "@_";
+}
+
 # 设置interface的ip和zone
 sub set_interface_ip_zone {
     my ( $ssg_interface, $ip ) = ();
@@ -124,6 +137,14 @@ sub set_interface_ip_zone {
 "set security zones security-zone $zone host-inbound-traffic system-services all\n";
                     print
 "set security zones security-zone $zone interfaces $href->{$ssg_interface}\n";
+
+                    # 将ip绑定到srx接口
+                    my $srx_interface = $href->{$ssg_interface};
+                    $href->{$ssg_interface} = { $srx_interface => $ip };
+
+                    # 将ip绑定到ssg接口的简写方式
+                    # $href->{$ssg_interface} =
+                    #   { $href->{$ssg_interface} => $ip };
                     $lpm_pairs{"$ip"} = $zone;
                     last START;
                 }
@@ -131,7 +152,7 @@ sub set_interface_ip_zone {
         }
     }
     else {    # 处理tunnel接口
-
+        my $ssg_config_line = "@_";
     }
 }
 
@@ -287,8 +308,16 @@ BEGIN {
         # 配置接口ip
         elsif (/\bset interface\b/
             && /\bip\b/
-            && /(?:$RE{net}{IPv4})/ )
+            && /(?:$RE{net}{IPv4})/ )    # 配置常规接口
         {
+            set_interface_ip_zone($_);
+            next;
+        }
+        elsif ( /\bset interface\b/ && /\b(route|nat)\b/ ) {    # 配置接口模式
+            set_interface_mode($_);
+            next;
+        }
+        elsif ( /\bset interface\b/ && /\btunnel\.\d+\b/ ) {    # 配置tunnel接口
             set_interface_ip_zone($_);
             next;
         }
@@ -297,7 +326,8 @@ BEGIN {
 }
 
 # $Data::Dumper::Pair = " : ";
-# print Dumper(%zones_interfaces);
+print Dumper(%zones_interfaces);
+
 # print Dumper(%services);
 
 # foreach my $key ( keys %zones_interfaces ) {
