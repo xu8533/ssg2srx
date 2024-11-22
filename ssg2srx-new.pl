@@ -36,12 +36,12 @@ my %zones_interfaces;
 
 # %zones_interfaces=>{
 #     zone1=>[
-#          { srx接口1=>ssg接口1 }
-#          { srx接口2=>ssg接口2 }
+#          { ssg接口1=>srx接口1 }
+#          { ssg接口2=>srx接口2 }
 #            ]
 #     zone2=>[
-#          { srx接口3=>ssg接口3 }
-#          { srx接口4=>ssg接口4 }
+#          { ssg接口3=>srx接口3 }
+#          { ssg接口4=>srx接口4 }
 #            ]
 # }
 
@@ -60,8 +60,9 @@ my %srx_application_port_number = (
 sub usage {
     my $err = shift and select STDERR;
     print
-"usage: $0 [-c ssg_config_file] [-o file] [-s srx_to_ssg_service_mapping_table.xlsx] ssg_file\n",
+"usage: $0 [-c ssg_config_file] [-d compare_file] [-o file] [-s srx_to_ssg_service_mapping_table.xlsx] ssg_file\n",
       "\t-c --config    file        ssg configuration file\n",
+      "\t-d --compare   file        ssg and srx configuration compare file\n",
       "\t-o --output    file        srx configuration output file\n",
       "\t-s --service   file        ssg to srx service mapping file\n",
       "\t-h --help                  print usage\n";
@@ -73,7 +74,7 @@ sub set_zone_interface {
     my ( $ssg_interface, $zone, $tag ) = ();
     my $ssg_config_line = "@_";
 
-    # 删除双引号
+    # 删除双引号,split后ssg接口和zone还是会多出双引号,故禁用
     # $ssg_config_line =~ s{"}{}g;
 
     if ( /\d+\.\d+/ && /\btag\b/ ) {
@@ -88,7 +89,8 @@ sub set_zone_interface {
         print "Please enter a replacement of $ssg_interface:";
     }
 
-    # 删除双引号
+    # 删除双引号,前处split后ssg接口和zone会多出双引号,
+    # 导致set_interface_ip_zone函数不能正确取出srx接口
     $ssg_interface =~ s{"}{}g;
     $zone          =~ s{"}{}g;
 
