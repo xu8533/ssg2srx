@@ -35,10 +35,14 @@ our ( $opt_c, $opt_d, $opt_o, $opt_s ) = '';
 my %zones_interfaces;
 
 # %zones_interfaces=>{
-#                      zone1=>[srx接口1=>ssg接口1]
-#                             [srx接口2=>ssg接口2]
-#                      zone2=>[srx接口3=>ssg接口3]
-#                             [srx接口4=>ssg接口4]
+#     zone1=>[
+#          { srx接口1=>ssg接口1 }
+#          { srx接口2=>ssg接口2 }
+#            ]
+#     zone2=>[
+#          { srx接口3=>ssg接口3 }
+#          { srx接口4=>ssg接口4 }
+#            ]
 # }
 
 my %srx_application_port_number = (
@@ -66,24 +70,30 @@ sub usage {
 
 # 设置zone与interface的映射关系
 sub set_zone_interface {
-    my ( $zone, $ssg_interface ) = ();
+    my ( $ssg_interface, $zone, $tag ) = ();
     my $ssg_config_line = "@_";
-    chomp $ssg_config_line;
 
     # 删除双引号
-    $ssg_config_line =~ s{"}{}g;
+    # $ssg_config_line =~ s{"}{}g;
 
-    if (/\d+\.\d+/) {
-        ( $ssg_interface, $zone ) =
-          ( ( split /\s+/ )[ 2, 6 ], $ssg_config_line );
+    if ( /\d+\.\d+/ && /\btag\b/ ) {
+        ( $ssg_interface, $tag, $zone ) =
+          ( ( split /\s+/ )[ 2, 4, 6 ], $ssg_config_line );
+        print
+          "Please enter a replacement of $ssg_interface with vlan tag $tag:";
     }
     else {
         ( $ssg_interface, $zone ) =
           ( ( split /\s+/ )[ 2, 4 ], $ssg_config_line );
+        print "Please enter a replacement of $ssg_interface:";
     }
-    print "Please enter a replacement of $ssg_interface:";
+
+    # 删除双引号
+    $ssg_interface =~ s{"}{}g;
+    $zone          =~ s{"}{}g;
+
     chomp( my $srx_interface = <STDIN> );    # 用户输入新的srx接口
-    push @{ $zones_interfaces{$zone} }, { $srx_interface => $ssg_interface };
+    push @{ $zones_interfaces{$zone} }, { $ssg_interface => $srx_interface };
 
     # my $ref_ssg_srx_interface = { $srx_interface => $ssg_interface };
     # push @{ $zones_interfaces{$zone} }, $ref_ssg_srx_interface;
@@ -92,7 +102,35 @@ sub set_zone_interface {
 
 # 设置interface的ip和zone
 sub set_interface_ip_zone {
+    my ( $ssg_interface, $ip ) = ();
+    my $ssg_config_line = "@_";
 
+    # 获取ssg接口和ip
+    if ( !/\btunnel\.\d+\b/ ) {    # 处理非tunnel接口
+        ( $ssg_interface, $ip ) = ( split /\s+/ )[ 2, 4 ];
+
+        # 循环%zones_interfaces,找到ssg接口对应的srx接口
+      START:
+        foreach my $zone ( sort keys %zones_interfaces ) {
+
+            # 查找具体zone下的每一个数组，如果找到ssg接口对应的srx接口则输出相关设置并跳出循环
+            foreach my $href ( @{ $zones_interfaces{$zone} } ) {
+                if ( exists $href->{$ssg_interface} ) {
+                    print
+"set interfaces $href->{$ssg_interface} unit 0 family inet address $ip\n";
+                    print
+"set security zones security-zone $zone host-inbound-traffic system-services all\n";
+                    print
+"set security zones security-zone $zone interfaces $href->{$ssg_interface}\n";
+                    $lpm_pairs{"$ip"} = $zone;
+                    last START;
+                }
+            }
+        }
+    }
+    else {    # 处理tunnel接口
+
+    }
 }
 
 # 设置路由
@@ -181,7 +219,8 @@ BEGIN {
     if ($opt_s) {
 
         # 读取excel内容，并删除单元格前导和末尾空格
-        my $services_file = Spreadsheet::Read->new( $opt_s, strip => 3 )
+        my $services_file =
+          Spreadsheet::Read->new( $opt_s, strip => 3, clip => 3 )
           or die "无法打开$opt_s";
         my $sheet = $services_file->sheet("ssg2srx");
 
@@ -235,6 +274,7 @@ BEGIN {
     }
 
     while (<>) {
+        chomp;
 
         # 获取zone与interface的映射关系
         if ( /\bset interface\b/ && /\bzone\b/ && !/\b(HA|Null)\b/ ) {
@@ -248,14 +288,15 @@ BEGIN {
             && /(?:$RE{net}{IPv4})/ )
         {
             set_interface_ip_zone($_);
+            next;
         }
     }
 
 }
 
 # $Data::Dumper::Pair = " : ";
-print Dumper(%zones_interfaces);
-print Dumper(%services);
+# print Dumper(%zones_interfaces);
+# print Dumper(%services);
 
 # foreach my $key ( keys %zones_interfaces ) {
 #     print "key: $key\n";
