@@ -34,21 +34,27 @@ our ( $opt_c, $opt_d, $opt_o, $opt_s ) = '';
 # 保存ssg接口与srx接口和zone的映射关系
 my %zones_interfaces;
 
+# 保存ssg接口和ip映射关系, tunnel接口设置源时需要
+my %ssg_interface_ip;
+
+# 保存ssg接口和srx接口映射关系, tunnel接口设置unnumbered-address时需要
+my %ssg_srx_interface;
+
 # %zones_interfaces=>{
 #     zone1=>[
 #               { ssg接口1=>
 #                    { srx接口1=> ip }
 #               }
 #               { ssg接口2=>
-#                    srx接口2 => ip}
+#                    { srx接口2=> ip }
 #               }
 #            ]
 #     zone2=>[
 #               { ssg接口3=>
-#                    {srx接口3 => ip}
+#                    { srx接口3 => ip }
 #               }
 #               { ssg接口4=>
-#                    srx接口4 => ip}
+#                    { srx接口4 => ip }
 #               }
 #            ]
 # }
@@ -104,6 +110,8 @@ sub set_zone_interface {
 
     chomp( my $srx_interface = <STDIN> );    # 用户输入新的srx接口
     push @{ $zones_interfaces{$zone} }, { $ssg_interface => $srx_interface };
+    $ssg_srx_interface{$ssg_interface} = $srx_interface;
+    print "set security zones security-zone $zone interfaces $srx_interface\n";
 
     # my $ref_ssg_srx_interface = { $srx_interface => $ssg_interface };
     # push @{ $zones_interfaces{$zone} }, $ref_ssg_srx_interface;
@@ -113,46 +121,75 @@ sub set_zone_interface {
 # 设置接口模式
 sub set_interface_mode {
     my $ssg_config_line = "@_";
+    my ($mode) = ( ( split /\s+/ )[-1], $ssg_config_line );
+
+    # nat模式需要配置源nat
+    if ( $mode eq "nat" ) {
+
+    }
 }
 
 # 设置interface的ip和zone
 sub set_interface_ip_zone {
-    my ( $ssg_interface, $ip ) = ();
     my $ssg_config_line = "@_";
+    my ( $ssg_interface, $ip ) = ( ( split /\s+/ )[ 2, -1 ], $ssg_config_line );
 
     # 获取ssg接口和ip
-    if ( !/\btunnel\.\d+\b/ ) {    # 处理非tunnel接口
-        ( $ssg_interface, $ip ) = ( split /\s+/ )[ 2, 4 ];
+    # 循环%zones_interfaces,找到ssg接口对应的srx接口
+  START:
+    foreach my $zone ( sort keys %zones_interfaces ) {
 
-        # 循环%zones_interfaces,找到ssg接口对应的srx接口
-      START:
-        foreach my $zone ( sort keys %zones_interfaces ) {
+        # 查找具体zone下的每一个数组，如果找到ssg接口对应的srx接口则输出相关设置并跳出循环
+        foreach my $href ( @{ $zones_interfaces{$zone} } ) {
+            if ( exists $href->{$ssg_interface} ) {
+                if ( $href->{$ssg_interface} =~ !/\btunnel\.\d+\b/ )
+                {    # 处理非tunnel接口
 
-            # 查找具体zone下的每一个数组，如果找到ssg接口对应的srx接口则输出相关设置并跳出循环
-            foreach my $href ( @{ $zones_interfaces{$zone} } ) {
-                if ( exists $href->{$ssg_interface} ) {
+# print
+# "set security zones security-zone $zone host-inbound-traffic system-services all\n";
                     print
-"set interfaces $href->{$ssg_interface} unit 0 family inet address $ip\n";
-                    print
-"set security zones security-zone $zone host-inbound-traffic system-services all\n";
+"set interfaces $href->{$ssg_interface} family inet address $ip\n";
                     print
 "set security zones security-zone $zone interfaces $href->{$ssg_interface}\n";
 
                     # 将ip绑定到srx接口
-                    my $srx_interface = $href->{$ssg_interface};
-                    $href->{$ssg_interface} = { $srx_interface => $ip };
+                    # my $srx_interface = $href->{$ssg_interface};
+                    # $href->{$ssg_interface} = { $srx_interface => $ip };
 
                     # 将ip绑定到ssg接口的简写方式
-                    # $href->{$ssg_interface} =
-                    #   { $href->{$ssg_interface} => $ip };
+                    $href->{$ssg_interface} =
+                      { $href->{$ssg_interface} => $ip };
+                    $ssg_interface_ip{$ssg_interface} = $ip;
                     $lpm_pairs{"$ip"} = $zone;
                     last START;
                 }
+                else {    # 处理tunnel接口
+                    if ( $ssg_config_line =~ /\bip unnumbered\b/ ) {
+                        print
+"set interfaces $href->{$ssg_interface} family inet unnumbered-address $ssg_srx_interface{$ip}\n";
+                        last START;
+                    }
+                    elsif ( $ssg_config_line =~ /\bdst-ip\b/ ) {
+                        my ($source) =
+                          ( ( split /\s+/ )[-3], $ssg_config_line );
+                        if ( $source =~ /$RE{net}{IPv4}/ ) {    # source为ip
+                            print "
+set interfaces $href->{$ssg_interface} tunnel source $source\n";
+                        }
+                        else {                                  # source为ssg接口
+                            my $ip =
+                              NetAddr::IP->new( $ssg_interface_ip{$source} );
+                            print
+"set interfaces $href->{$ssg_interface} tunnel source ",
+                              $ip->addr, "\n";
+                        }
+                        print "
+set interfaces $href->{$ssg_interface} tunnel destination $ip\n";
+                        last START;
+                    }
+                }
             }
         }
-    }
-    else {    # 处理tunnel接口
-        my $ssg_config_line = "@_";
     }
 }
 
@@ -313,7 +350,7 @@ BEGIN {
             set_interface_ip_zone($_);
             next;
         }
-        elsif ( /\bset interface\b/ && /\b(route|nat)\b/ ) {    # 配置接口模式
+        elsif ( /\bset interface\b/ && /\bnat\b/ ) {    # 配置接口模式
             set_interface_mode($_);
             next;
         }
