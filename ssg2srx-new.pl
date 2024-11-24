@@ -29,7 +29,7 @@ my %lpm_pairs;               # 保存路由/ip与zone的映射关系，供lpm使
 my %services;                # 保存ssg服务名与srx服务名的映射关系
 
 # 保存命令选项值
-our ( $opt_c, $opt_d, $opt_o, $opt_s ) = '';
+our ( $opt_c, $opt_d, $opt_o, $opt_s ) = ();
 
 # 保存ssg接口与srx接口和zone的映射关系
 my %zones_interfaces;
@@ -40,24 +40,14 @@ my %ssg_interface_ip;
 # 保存ssg接口和srx接口映射关系, tunnel接口设置unnumbered-address时需要
 my %ssg_srx_interface;
 
-# %zones_interfaces=>{
-#     zone1=>[
-#               { ssg接口1=>
-#                    { srx接口1=> ip }
-#               }
-#               { ssg接口2=>
-#                    { srx接口2=> ip }
-#               }
-#            ]
-#     zone2=>[
-#               { ssg接口3=>
-#                    { srx接口3 => ip }
-#               }
-#               { ssg接口4=>
-#                    { srx接口4 => ip }
-#               }
-#            ]
-# }
+# 保存static nat的虚地址和实际地址
+my %mip_address_pairs;
+
+# 保存source nat的id和pool
+my %dip_pool;
+
+# 保存每个zone的MIP规则id
+my %RULE_NUM;
 
 my %srx_application_port_number = (
     http     => 80,
@@ -112,6 +102,7 @@ sub set_zone_interface {
     push @{ $zones_interfaces{$zone} }, { $ssg_interface => $srx_interface };
     $ssg_srx_interface{$ssg_interface} = $srx_interface;
     print "set security zones security-zone $zone interfaces $srx_interface\n";
+    return $zone;
 
     # my $ref_ssg_srx_interface = { $srx_interface => $ssg_interface };
     # push @{ $zones_interfaces{$zone} }, $ref_ssg_srx_interface;
@@ -139,7 +130,8 @@ sub set_interface_ip_zone {
   START:
     foreach my $zone ( sort keys %zones_interfaces ) {
 
-        # 查找具体zone下的每一个数组，如果找到ssg接口对应的srx接口则输出相关设置并跳出循环
+        # 查找具体zone下的每一个数组，
+        # 如果找到ssg接口对应的srx接口则输出相关设置并跳出循环
         foreach my $href ( @{ $zones_interfaces{$zone} } ) {
             if ( exists $href->{$ssg_interface} ) {
                 if ( $href->{$ssg_interface} =~ !/\btunnel\.\d+\b/ )
@@ -195,6 +187,8 @@ set interfaces $href->{$ssg_interface} tunnel destination $ip\n";
 
 # 设置路由
 sub set_route {
+    my $ssg_config_line = "@_";
+    my ( $ssg_interface, $ip ) = ( ( split /\s+/ )[ 2, -1 ], $ssg_config_line );
 
 }
 
@@ -234,16 +228,65 @@ sub set_nat {
 
 # 设置静态nat
 sub set_mip {
+    my $ssg_config_line = "@_";
+    my ( $ssg_interface, $virtual_ip, $real_ip, $netmask ) =
+      ( ( split /\s+/ )[ 2, 4, 6, -3 ], $ssg_config_line )
+      ;    # 获取MIP绑定的接口，实部和虚部地址以及子网掩码
+    $ssg_interface =~ s{"}{}g;
 
-}
-
-# 设置目的nat
-sub set_vip {
-
+    foreach my $zone ( sort keys %zones_interfaces ) {
+        foreach my $href ( @{ $zones_interfaces{$zone} } ) {
+            if ( exists $href->{$ssg_interface}
+                && ( $netmask eq "255.255.255.255" ) )    # MIP为单个ip
+            {
+                my $tag                = "host_";
+                my $temp_srx_interface = $href->{$ssg_interface};
+                $temp_srx_interface =~ s/\./_/;
+                print
+"set security nat static rule-set $zone\_$temp_srx_interface rule $zone\_$RULE_NUM{ $zone }  match destination-address $virtual_ip\n";
+                print
+"set security nat static rule-set $zone\_$temp_srx_interface rule $zone\_$RULE_NUM{ $zone } then static-nat prefix $real_ip\n";
+                $RULE_NUM{$zone}++;
+                $mip_address_pairs{"$virtual_ip"} = $real_ip;
+                return $virtual_ip, $real_ip, $tag;
+            }
+            elsif ( exists $href->{$ssg_interface}
+                && ( $netmask ne "255.255.255.255" ) )    # MIP为子网
+            {
+                my $tag                = "net_";
+                my $temp_srx_interface = $href->{$ssg_interface};
+                $temp_srx_interface =~ s/\./_/;
+                print
+"set security nat static rule-set $zone\_$temp_srx_interface rule $zone\_$RULE_NUM{ $zone }  match destination-address $virtual_ip\n";
+                print
+"set security nat static rule-set $zone\_$temp_srx_interface rule $zone\_$RULE_NUM{ $zone } then static-nat prefix $real_ip\n";
+                $RULE_NUM{$zone}++;
+                $mip_address_pairs{"$virtual_ip"} = $real_ip;
+                return $virtual_ip, $real_ip, $tag;
+            }
+        }
+    }
 }
 
 # 设置源nat
 sub set_dip {
+    my ( $dip_id, $start_dip_address, $stop_dip_address ) = ();
+    my $ssg_config_line = "@_";
+
+    # dip配置分为常规和ext两种模式
+    if ( $ssg_config_line =~ /\bext\b/ ) {    # ext模式
+        ( $dip_id, $start_dip_address, $stop_dip_address ) =
+          ( split /\s+/ )[ 8, -2, -1 ];
+    }
+    else {                                    # 常规模式
+        ( $dip_id, $start_dip_address, $stop_dip_address ) =
+          ( split /\s+/ )[ 4, -2, -1 ];
+    }
+    $dip_pool{$dip_id} = "$start_dip_address to $stop_dip_address";
+}
+
+# 设置目的nat
+sub set_vip {
 
 }
 
@@ -263,8 +306,6 @@ binmode( STDIN,  ":encoding(gbk)" );
 binmode( STDERR, ":encoding(gbk)" );
 
 BEGIN {
-
-    use Spreadsheet::Read;
 
     #处理命令行参数
     GetOptions(
@@ -292,7 +333,7 @@ BEGIN {
     }
 
     # 打开ssg配置文件
-    if ( $#ARGV < -1 || $#ARGV > 5 ) {
+    if ( $#ARGV < -1 || $#ARGV > 1 ) {
         usage(1);
     }
 
@@ -314,13 +355,6 @@ BEGIN {
       or die "can't open file:$!\n";
     my $tmp_ssg_config_file = do { local $/; <$config> };
     close $config;
-    @ssg_config_file = split( /\n/, $tmp_ssg_config_file );
-
-    # 删除空行
-    @ssg_config_file = grep { !/(^$|^\n$|^\s+$)/ } @ssg_config_file;
-
-    # 删除行首尾空格
-    @ssg_config_file = map { s/^\s+|\s+$//gr } @ssg_config_file;
 
     # 如果使用-c参数，将参数传递给ARGV
     if ($opt_c) {
@@ -338,13 +372,17 @@ BEGIN {
 
         # 获取zone与interface的映射关系
         if ( /\bset interface\b/ && /\bzone\b/ && !/\b(HA|Null)\b/ ) {
-            set_zone_interface($_);
+            my $zone = set_zone_interface($_);
+
+            # 设置每个zone的MIP初始id为0
+            $RULE_NUM{$zone} = 0 unless ( exists $RULE_NUM{$zone} );
             next;
         }
 
         # 配置接口ip
         elsif (/\bset interface\b/
             && /\bip\b/
+            && !/\bdip\b/
             && /(?:$RE{net}{IPv4})/ )    # 配置常规接口
         {
             set_interface_ip_zone($_);
@@ -358,12 +396,38 @@ BEGIN {
             set_interface_ip_zone($_);
             next;
         }
+        elsif ( /\binterface\b/ && /\bmip\b/ ) {                # 获取MIP的实地址和虚地址
+            my ( $mip, $host, $mip_type ) = set_mip($_);    # 通过返回值确定host还是net
+            $tmp_ssg_config_file =~
+              s#MIP\($mip\)#$mip_type . $host#gm;           # 用MIP实地址替换虚地址
+            next;
+        }
+        elsif ( /\bset interface\b/ && /\bdip\b/ ) {        # 获取DIP的id和pool
+            set_dip($_);
+            next;
+        }
+        elsif ( /policy id/ && /name/ ) {
+            $tmp_ssg_config_file =~ s{name\ \"[^"]*\"}{}gm;    # 删除策略名称，只使用策略ID
+            next;
+        }
+        elsif ( /set route/ && /interface/ && !/\bsource\b/ ) {
+            set_route($_);
+            next;
+        }
     }
-
+    my $h2p        = Lingua::Han::PinYin->new();
+    my $han2pinyin = $h2p->han2pinyin($tmp_ssg_config_file);    # 将汉字转换成拼音
+    @ssg_config_file = split( /\n/, $han2pinyin );
 }
 
+# 删除空行
+@ssg_config_file = grep { !/(^$|^\n$|^\s+$)/ } @ssg_config_file;
+
+# 删除行首尾空格
+@ssg_config_file = map { s/^\s+|\s+$//gr } @ssg_config_file;
+
 # $Data::Dumper::Pair = " : ";
-print Dumper(%zones_interfaces);
+# print Dumper(%zones_interfaces);
 
 # print Dumper(%services);
 
@@ -374,3 +438,44 @@ print Dumper(%zones_interfaces);
 #         print "$srx_interface $ssg_interface\n";
 #     }
 # }
+__END__
+=encoding utf8
+=head1 数据结构
+=iterm %zones_interfaces
+%zones_interfaces=> {
+    zone1=>[
+              { ssg接口1=>
+                   { srx接口1=> ip }
+              }
+              { ssg接口2=>
+                   { srx接口2=> ip }
+              }
+           ]
+    zone2=>[
+              { ssg接口3=>
+                   { srx接口3 => ip }
+              }
+              { ssg接口4=>
+                   { srx接口4 => ip }
+              }
+           ]
+}
+
+%ssg_interface_ip=> {
+    { ssg接口1 => ip1 },
+    { ssg接口2 => ip2 },
+}
+
+%ssg_srx_interface=> {
+
+}
+
+%mip_address_pairs=> {
+    {虚拟地址1 => 实地址1},
+    {虚拟地址2 => 实地址2},
+}
+
+my %dip_pool=>{
+    {pool_id1 => ip1}
+    {pool_id2 => ip2}
+}
