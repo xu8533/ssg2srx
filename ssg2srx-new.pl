@@ -441,7 +441,7 @@ BEGIN {
 __END__
 =encoding utf8
 =head1 数据结构
-=iterm %zones_interfaces
+=item %zones_interfaces
 %zones_interfaces=> {
     zone1=>[
               { ssg接口1=>
@@ -461,24 +461,24 @@ __END__
            ]
 }
 
-=iterm %ssg_interface_ip
+=item %ssg_interface_ip
 %ssg_interface_ip=> {
     { ssg接口1 => ip1 },
     { ssg接口2 => ip2 },
 }
 
-=iterm %ssg_srx_interface
+=item %ssg_srx_interface
 %ssg_srx_interface=> {
 
 }
 
-=iterm %mip_address_pairs
+=item %mip_address_pairs
 %mip_address_pairs=> {
     {虚拟地址1 => 实地址1},
     {虚拟地址2 => 实地址2},
 }
 
-=iterm %dip_pool
+=item %dip_pool
 my %dip_pool=>{
     {pool_id1 => ip1}
     {pool_id2 => ip2}
