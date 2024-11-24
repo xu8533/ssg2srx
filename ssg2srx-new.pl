@@ -461,20 +461,24 @@ __END__
            ]
 }
 
+=iterm %ssg_interface_ip
 %ssg_interface_ip=> {
     { ssg接口1 => ip1 },
     { ssg接口2 => ip2 },
 }
 
+=iterm %ssg_srx_interface
 %ssg_srx_interface=> {
 
 }
 
+=iterm %mip_address_pairs
 %mip_address_pairs=> {
     {虚拟地址1 => 实地址1},
     {虚拟地址2 => 实地址2},
 }
 
+=iterm %dip_pool
 my %dip_pool=>{
     {pool_id1 => ip1}
     {pool_id2 => ip2}
