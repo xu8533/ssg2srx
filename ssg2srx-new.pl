@@ -233,8 +233,8 @@ sub set_mip {
     foreach my $zone ( sort keys %zones_interfaces ) {
         foreach my $href ( @{ $zones_interfaces{$zone} } ) {
             if ( exists $href->{$ssg_interface}
-                && ( $netmask eq "255.255.255.255" ) )
-            {    # MIP为单个ip
+                && ( $netmask eq "255.255.255.255" ) )    # MIP为单个ip
+            {
                 my $tag               = "host";
                 my $tmp_srx_interface = $ssg_srx_interface{$ssg_interface};
                 $tmp_srx_interface =~ s/\./_/;
@@ -247,8 +247,8 @@ sub set_mip {
                 return $virtual_ip, $real_ip, $tag;
             }
             elsif ( exists $href->{$ssg_interface}
-                && ( $netmask ne "255.255.255.255" ) )
-            {    # MIP为子网
+                && ( $netmask ne "255.255.255.255" ) )    # MIP为子网
+            {
 
                 my $tag               = "net";
                 my $tmp_srx_interface = $ssg_srx_interface{$ssg_interface};
