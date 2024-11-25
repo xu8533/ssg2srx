@@ -101,12 +101,9 @@ sub set_zone_interface {
     chomp( my $srx_interface = <STDIN> );    # 用户输入新的srx接口
     push @{ $zones_interfaces{$zone} }, { $ssg_interface => $srx_interface };
     $ssg_srx_interface{$ssg_interface} = $srx_interface;
-    print "set security zones security-zone $zone interfaces $srx_interface\n";
-    return $zone;
 
-    # my $ref_ssg_srx_interface = { $srx_interface => $ssg_interface };
-    # push @{ $zones_interfaces{$zone} }, $ref_ssg_srx_interface;
-    # return $zone, %ssg_srx_interfaces;
+   # print "set security zones security-zone $zone interfaces $srx_interface\n";
+    return $zone;
 }
 
 # 设置接口模式
@@ -134,7 +131,7 @@ sub set_interface_ip_zone {
         # 如果找到ssg接口对应的srx接口则输出相关设置并跳出循环
         foreach my $href ( @{ $zones_interfaces{$zone} } ) {
             if ( exists $href->{$ssg_interface} ) {
-                if ( $href->{$ssg_interface} =~ !/\btunnel\.\d+\b/ )
+                unless ( $href->{$ssg_interface} =~ m{\bgr-0\/0\/0\.\d+\b} )
                 {    # 处理非tunnel接口
 
 # print
@@ -173,7 +170,7 @@ set interfaces $href->{$ssg_interface} tunnel source $source\n";
                               NetAddr::IP->new( $ssg_interface_ip{$source} );
                             print
 "set interfaces $href->{$ssg_interface} tunnel source ",
-                              $ip->addr, "\n";
+                              $ip->addr;
                         }
                         print "
 set interfaces $href->{$ssg_interface} tunnel destination $ip\n";
@@ -233,33 +230,33 @@ sub set_mip {
       ( ( split /\s+/ )[ 2, 4, 6, -3 ], $ssg_config_line )
       ;    # 获取MIP绑定的接口，实部和虚部地址以及子网掩码
     $ssg_interface =~ s{"}{}g;
-
     foreach my $zone ( sort keys %zones_interfaces ) {
         foreach my $href ( @{ $zones_interfaces{$zone} } ) {
             if ( exists $href->{$ssg_interface}
-                && ( $netmask eq "255.255.255.255" ) )    # MIP为单个ip
-            {
-                my $tag                = "host_";
-                my $temp_srx_interface = $href->{$ssg_interface};
-                $temp_srx_interface =~ s/\./_/;
+                && ( $netmask eq "255.255.255.255" ) )
+            {    # MIP为单个ip
+                my $tag               = "host";
+                my $tmp_srx_interface = $ssg_srx_interface{$ssg_interface};
+                $tmp_srx_interface =~ s/\./_/;
                 print
-"set security nat static rule-set $zone\_$temp_srx_interface rule $zone\_$RULE_NUM{ $zone }  match destination-address $virtual_ip\n";
+"set security nat static rule-set $zone\_$tmp_srx_interface rule $zone\_$RULE_NUM{$zone}  match destination-address $virtual_ip\n";
                 print
-"set security nat static rule-set $zone\_$temp_srx_interface rule $zone\_$RULE_NUM{ $zone } then static-nat prefix $real_ip\n";
+"set security nat static rule-set $zone\_$tmp_srx_interface rule $zone\_$RULE_NUM{$zone} then static-nat prefix $real_ip\n";
                 $RULE_NUM{$zone}++;
                 $mip_address_pairs{"$virtual_ip"} = $real_ip;
                 return $virtual_ip, $real_ip, $tag;
             }
             elsif ( exists $href->{$ssg_interface}
-                && ( $netmask ne "255.255.255.255" ) )    # MIP为子网
-            {
-                my $tag                = "net_";
-                my $temp_srx_interface = $href->{$ssg_interface};
-                $temp_srx_interface =~ s/\./_/;
+                && ( $netmask ne "255.255.255.255" ) )
+            {    # MIP为子网
+
+                my $tag               = "net";
+                my $tmp_srx_interface = $ssg_srx_interface{$ssg_interface};
+                $tmp_srx_interface =~ s/\./_/;
                 print
-"set security nat static rule-set $zone\_$temp_srx_interface rule $zone\_$RULE_NUM{ $zone }  match destination-address $virtual_ip\n";
+"set security nat static rule-set $zone\_$tmp_srx_interface rule $zone\_$RULE_NUM{$zone}  match destination-address $virtual_ip\n";
                 print
-"set security nat static rule-set $zone\_$temp_srx_interface rule $zone\_$RULE_NUM{ $zone } then static-nat prefix $real_ip\n";
+"set security nat static rule-set $zone\_$tmp_srx_interface rule $zone\_$RULE_NUM{$zone} then static-nat prefix $real_ip\n";
                 $RULE_NUM{$zone}++;
                 $mip_address_pairs{"$virtual_ip"} = $real_ip;
                 return $virtual_ip, $real_ip, $tag;
@@ -392,14 +389,15 @@ BEGIN {
             set_interface_mode($_);
             next;
         }
-        elsif ( /\bset interface\b/ && /\btunnel\.\d+\b/ ) {    # 配置tunnel接口
+        elsif ( /\bset interface\b/ && /\btunnel\.\d+\b/ && !/\bgre\b/ )
+        {                                               # 配置tunnel接口
             set_interface_ip_zone($_);
             next;
         }
-        elsif ( /\binterface\b/ && /\bmip\b/ ) {                # 获取MIP的实地址和虚地址
+        elsif ( /\binterface\b/ && /\bmip\b/ ) {        # 获取MIP的实地址和虚地址
             my ( $mip, $host, $mip_type ) = set_mip($_);    # 通过返回值确定host还是net
             $tmp_ssg_config_file =~
-              s#MIP\($mip\)#$mip_type . $host#gm;           # 用MIP实地址替换虚地址
+              s#MIP\($mip\)#$mip_type\_$host#gm;            # 用MIP实地址替换虚地址
             next;
         }
         elsif ( /\bset interface\b/ && /\bdip\b/ ) {        # 获取DIP的id和pool
@@ -427,9 +425,10 @@ BEGIN {
 @ssg_config_file = map { s/^\s+|\s+$//gr } @ssg_config_file;
 
 # $Data::Dumper::Pair = " : ";
-# print Dumper(%zones_interfaces);
+print Dumper(%zones_interfaces);
 
 # print Dumper(%services);
+# print Dumper(%RULE_NUM);
 
 # foreach my $key ( keys %zones_interfaces ) {
 #     print "key: $key\n";
@@ -469,7 +468,8 @@ __END__
 
 =item %ssg_srx_interface
 %ssg_srx_interface=> {
-
+    { ssg接口1 => srx接口1 },
+    { ssg接口2 => srx接口2 },
 }
 
 =item %mip_address_pairs
@@ -482,4 +482,10 @@ __END__
 my %dip_pool=>{
     {pool_id1 => ip1}
     {pool_id2 => ip2}
+}
+
+=item %RULE_NUM
+my %RULE_NUM=>{
+    {zone1 => rule_id1}
+    {zone2 => rule_id2}
 }
