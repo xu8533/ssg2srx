@@ -4,6 +4,7 @@
 # use Cwd 'abs_path';
 # use Excel::Writer::XLSX;
 use strict;
+use Switch;
 use warnings;
 use NetAddr::IP;
 use Net::IP::LPM;
@@ -122,8 +123,10 @@ sub set_interface_ip_zone {
     my $ssg_config_line = "@_";
     my ( $ssg_interface, $ip ) = ( ( split /\s+/ )[ 2, -1 ], $ssg_config_line );
 
-    # 获取ssg接口和ip
-    # 循环%zones_interfaces,找到ssg接口对应的srx接口
+# 获取ssg接口和ip
+# 循环%zones_interfaces,找到ssg接口对应的srx接口
+# print
+# "set security zones security-zone $zone host-inbound-traffic system-services all\n";
   START:
     foreach my $zone ( sort keys %zones_interfaces ) {
 
@@ -133,9 +136,6 @@ sub set_interface_ip_zone {
             if ( exists $href->{$ssg_interface} ) {
                 unless ( $href->{$ssg_interface} =~ m{\bgr-0\/0\/0\.\d+\b} )
                 {    # 处理非tunnel接口
-
-# print
-# "set security zones security-zone $zone host-inbound-traffic system-services all\n";
                     print
 "set interfaces $href->{$ssg_interface} family inet address $ip\n";
                     print
@@ -191,31 +191,78 @@ sub set_route {
 
 # 设置scheduler
 sub set_scheduler {
-
+    my $ssg_config_line = "@_";
+    my @schedulers      = ( split /\s+/, $ssg_config_line );
+    switch ( $schedulers[3] ) {
+        case ("once") {
+            my $start_date = $schedulers[5];
+            my $start_time = $schedulers[6];
+            my $stop_date  = $schedulers[8];
+            my $stop_time  = $schedulers[9];
+            if ( $start_date =~ m!\b(\d\/\d\/\d{4})\b! ) {
+                $start_date =~ s#(\d)\/(\d)\/(\d{4})#0$1\/0$2\/$3#;
+            }
+            elsif ( $start_date =~ m!\b(\d\/\d{2}\/\d{4})\b! ) {
+                $start_date =~ s#(\d)\/(\d{2})\/(\d{4})#0$1\/$2\/$3#;
+            }
+            if ( $stop_date =~ m!\b(\d\/\d\/\d{4})\b! ) {
+                $stop_date =~ s#(\d)\/(\d)\/(\d{4})#0$1\/0$2\/$3#;
+            }
+            elsif ( $stop_date =~ m!\b(\d\/\d{2}\/\d{4})\b! ) {
+                $stop_date =~ s#(\d)\/(\d{2})\/(\d{4})#0$1\/$2\/$3#;
+            }
+            $start_date = DateTime::Format::Flexible->parse_datetime(
+                "$start_date $start_time");
+            $stop_date = DateTime::Format::Flexible->parse_datetime(
+                "$stop_date $stop_time");
+            $start_date =~ s{T}{\.};
+            $stop_date  =~ s{T}{\.};
+            print
+"set schedulers scheduler $schedulers[2] start-date $start_date stop-date $stop_date\n";
+            next;
+        }
+        case ("recurrent") {
+            my $some_day   = $schedulers[4];
+            my $start_time = $schedulers[6];
+            my $stop_time  = $schedulers[8];
+            $start_time =
+              DateTime::Format::Flexible->parse_datetime($start_time);
+            $stop_time = DateTime::Format::Flexible->parse_datetime($stop_time);
+            $start_time =~ s{.*T(.*)}{$1#};
+            $stop_time  =~ s{.*T(.*)}{$1#};
+            print
+"set schedulers scheduler $schedulers[2] start-time $start_time stop-time $stop_time\n";
+        }
+    }
 }
 
 # 设置地址簿
 sub set_address_book {
+    my $ssg_config_line = "@_";
 
 }
 
 # 设置地址集合
 sub set_address_set {
+    my $ssg_config_line = "@_";
 
 }
 
 # 设置服务
 sub set_service {
+    my $ssg_config_line = "@_";
 
 }
 
 # 设置服务集合
 sub set_service_set {
+    my $ssg_config_line = "@_";
 
 }
 
 # 设置screen
 sub set_screen {
+    my $ssg_config_line = "@_";
 
 }
 
@@ -249,7 +296,6 @@ sub set_mip {
             elsif ( exists $href->{$ssg_interface}
                 && ( $netmask ne "255.255.255.255" ) )    # MIP为子网
             {
-
                 my $tag               = "net";
                 my $tmp_srx_interface = $ssg_srx_interface{$ssg_interface};
                 $tmp_srx_interface =~ s/\./_/;
@@ -289,13 +335,14 @@ sub set_vip {
 
 # 设置策略
 sub set_policy {
+    my $ssg_config_line = "@_";
 
 }
 
 # 中文翻译成拼音
-sub zh2pinyin {
-
-}
+# sub zh2pinyin {
+#
+# }
 
 # 输入输出报错支持中文
 binmode( STDOUT, ":encoding(gbk)" );
@@ -397,11 +444,15 @@ BEGIN {
         elsif ( /\binterface\b/ && /\bmip\b/ ) {        # 获取MIP的实地址和虚地址
             my ( $mip, $host, $mip_type ) = set_mip($_);    # 通过返回值确定host还是net
             $tmp_ssg_config_file =~
-              s#MIP\($mip\)#$mip_type\_$host#gm;            # 用MIP实地址替换虚地址
+              s{MIP\($mip\)}{$mip_type\_$host}gm;           # 用MIP实地址替换虚地址
             next;
         }
         elsif ( /\bset interface\b/ && /\bdip\b/ ) {        # 获取DIP的id和pool
             set_dip($_);
+            next;
+        }
+        elsif (/\bset scheduler\b/) {                       # 设置时间调度器
+            set_scheduler($_);
             next;
         }
         elsif ( /policy id/ && /name/ ) {
