@@ -184,7 +184,43 @@ set interfaces $href->{$ssg_interface} tunnel destination $ip\n";
 # 设置路由
 sub set_route {
     my $ssg_config_line = "@_";
-    my ( $ssg_interface, $ip ) = ( ( split /\s+/ )[ 2, -1 ], $ssg_config_line );
+    my @route           = ( split /\s+/, $ssg_config_line );
+    my $length          = scalar @route;
+    if (   /\bset route\b/
+        && /\binterface\b/
+        && /\bgateway\b/
+        && !/\bsource\b/ )
+    {
+        if (/\bpreference\b/) {
+            my ( $droute, $gateway, $preference ) = ( split /\s+/ )[ 2, 6, 8 ];
+            print
+"set routing-options static route $droute next-hop $gateway preference $preference\n";
+        }
+        else {
+            my ( $droute, $gateway ) = ( split /\s+/ )[ 2, 6 ];
+            print
+              "set routing-options static route $droute next-hop $gateway\n";
+        }
+    }
+    elsif ( /\bset route\b/ && /\bsource\b/ && /\b(interface|gateway)\b/ ) {
+        if (/\bpreference\b/) {
+            my ( $droute, $gateway, $preference ) = ( split /\s+/ )[ 2, 4, 6 ];
+            print
+"set routing-options static route $droute next-hop $gateway preference $preference\n";
+        }
+        else {
+            my ( $droute, $gateway ) = ( split /\s+/ )[ 2, 4 ];
+            print
+              "set routing-options static route $droute next-hop $gateway\n";
+        }
+    }
+    elsif ( /\bset route\b/ && /\b(interface|gateway)\b/ && $length == 5 ) {
+        my ( $droute, $gateway ) = ( split /\s+/ )[ 2, 4 ];
+        if ( $gateway =~ /^\w+\.\d+$/ ) {
+            $gateway = $ssg_srx_interface{$gateway};
+        }
+        print "set routing-options static route $droute next-hop $gateway\n";
+    }
 
 }
 
