@@ -12,7 +12,7 @@ use File::Basename;
 use Spreadsheet::Read;
 use Lingua::Han::PinYin;
 use DateTime::Format::Flexible;
-use Regexp::Common qw(net);
+use Regexp::Common qw(net time);
 use Data::Dumper   qw(Dumper);
 
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
@@ -234,41 +234,28 @@ sub set_scheduler {
             my $start_time = $schedulers[6];
             my $stop_date  = $schedulers[8];
             my $stop_time  = $schedulers[9];
-            if ( $start_date =~ m!\b(\d\/\d\/\d{4})\b! ) {
-                $start_date =~ s#(\d)\/(\d)\/(\d{4})#0$1\/0$2\/$3#;
+            if ( $start_date =~ $RE{time}{mdy} && $stop_date =~ $RE{time}{mdy} )
+            {    # ssg使用美式风格时间，srx使用ISO-8601格式时间，但T分隔符需替换成.号
+                $start_date = DateTime::Format::Flexible->parse_datetime(
+                    "$start_date $start_time");
+                $stop_date = DateTime::Format::Flexible->parse_datetime(
+                    "$stop_date $stop_time");
+                $start_date =~ s{T}{\.};
+                $stop_date  =~ s{T}{\.};
             }
-            elsif ( $start_date =~ m!\b(\d\/\d{2}\/\d{4})\b! ) {
-                $start_date =~ s#(\d)\/(\d{2})\/(\d{4})#0$1\/$2\/$3#;
-            }
-            if ( $stop_date =~ m!\b(\d\/\d\/\d{4})\b! ) {
-                $stop_date =~ s#(\d)\/(\d)\/(\d{4})#0$1\/0$2\/$3#;
-            }
-            elsif ( $stop_date =~ m!\b(\d\/\d{2}\/\d{4})\b! ) {
-                $stop_date =~ s#(\d)\/(\d{2})\/(\d{4})#0$1\/$2\/$3#;
-            }
-            $start_date = DateTime::Format::Flexible->parse_datetime(
-                "$start_date $start_time");
-            $stop_date = DateTime::Format::Flexible->parse_datetime(
-                "$stop_date $stop_time");
-            $start_date =~ s{T}{\.};
-            $stop_date  =~ s{T}{\.};
             print
 "set schedulers scheduler $schedulers[2] start-date $start_date stop-date $stop_date\n";
-            next;
-        }
+            return;
+        };
         case ("recurrent") {
             my $some_day   = $schedulers[4];
             my $start_time = $schedulers[6];
             my $stop_time  = $schedulers[8];
-            $start_time =
-              DateTime::Format::Flexible->parse_datetime($start_time);
-            $stop_time = DateTime::Format::Flexible->parse_datetime($stop_time);
-            $start_time =~ s{.*T(.*)}{$1#};
-            $stop_time  =~ s{.*T(.*)}{$1#};
             print
-"set schedulers scheduler $schedulers[2] start-time $start_time stop-time $stop_time\n";
+"set schedulers scheduler $schedulers[2] $some_day start-time $start_time stop-time $stop_time\n";
         }
-    }
+        return;
+    };
 }
 
 # 设置地址簿
