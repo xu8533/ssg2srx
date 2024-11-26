@@ -1,6 +1,5 @@
 #!/usr/bin/perl
 
-# use Scalar::Util qw(looks_like_number);
 # use Cwd 'abs_path';
 # use Excel::Writer::XLSX;
 use strict;
@@ -251,13 +250,21 @@ sub set_address_set {
 # 设置服务
 sub set_service {
     my $ssg_config_line = "@_";
-
+    my ( $service_name, $protocol, $sport, $dport ) =
+      ( split /\s+/ )[ 2, 4, 6, 8 ];
+    $service_name =~ s{\/}{-}g;
+    print
+"set applications application $service_name term $protocol\_$dport protocol $protocol source-port $sport destination-port $dport\n";
 }
 
 # 设置服务集合
 sub set_service_set {
     my $ssg_config_line = "@_";
-
+    my ( $service_group_name, $service ) = ( split /\s+/ )[ 3, -1 ];
+    $service            =~ s{\/}{-}g;
+    $service_group_name =~ s{\/}{-}g;
+    print
+"set applications application-set $service_group_name application $service\n";
 }
 
 # 设置screen
@@ -328,7 +335,7 @@ sub set_dip {
     $dip_pool{$dip_id} = "$start_dip_address to $stop_dip_address";
 }
 
-# 设置目的nat
+# 设置目的nat(virtual ip)
 sub set_vip {
 
 }
@@ -336,7 +343,6 @@ sub set_vip {
 # 设置策略
 sub set_policy {
     my $ssg_config_line = "@_";
-
 }
 
 # 中文翻译成拼音
@@ -441,6 +447,14 @@ BEGIN {
             set_interface_ip_zone($_);
             next;
         }
+        elsif ( /set service/ && /(protocol|\+)/ ) {    # 配置服务
+            set_service($_);
+            next;
+        }
+        elsif ( /set group service/ && /\badd\b/ ) {    # 配置服务集合
+            set_service_set($_);
+            next;
+        }
         elsif ( /\binterface\b/ && /\bmip\b/ ) {        # 获取MIP的实地址和虚地址
             my ( $mip, $host, $mip_type ) = set_mip($_);    # 通过返回值确定host还是net
             $tmp_ssg_config_file =~
@@ -455,10 +469,11 @@ BEGIN {
             set_scheduler($_);
             next;
         }
-        elsif ( /policy id/ && /name/ ) {
-            $tmp_ssg_config_file =~ s{name\ \"[^"]*\"}{}gm;    # 删除策略名称，只使用策略ID
-            next;
-        }
+
+       # elsif ( /policy id/ && /name/ ) {
+       #     $tmp_ssg_config_file =~ s{name\ \"[^"]*\"}{}gm;    # 删除策略名称，只使用策略ID
+       #     next;
+       # }
         elsif ( /set route/ && /interface/ && !/\bsource\b/ ) {
             set_route($_);
             next;
