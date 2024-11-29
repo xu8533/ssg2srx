@@ -236,6 +236,8 @@ sub set_scheduler {
             my $stop_time  = $schedulers[9];
             if ( $start_date =~ $RE{time}{mdy} && $stop_date =~ $RE{time}{mdy} )
             {    # ssg使用美式风格时间，srx使用ISO-8601格式时间，但T分隔符需替换成.号
+                $start_time = "$start_time:0";    # 补足时间，否则会出现无法解析的错误
+                $stop_time  = "$stop_time:0";
                 $start_date = DateTime::Format::Flexible->parse_datetime(
                     "$start_date $start_time");
                 $stop_date = DateTime::Format::Flexible->parse_datetime(
@@ -246,7 +248,7 @@ sub set_scheduler {
             print
 "set schedulers scheduler $schedulers[2] start-date $start_date stop-date $stop_date\n";
             return;
-        };
+        }
         case ("recurrent") {
             my $some_day   = $schedulers[4];
             my $start_time = $schedulers[6];
@@ -255,7 +257,7 @@ sub set_scheduler {
 "set schedulers scheduler $schedulers[2] $some_day start-time $start_time stop-time $stop_time\n";
         }
         return;
-    };
+    }
 }
 
 # 设置地址簿
