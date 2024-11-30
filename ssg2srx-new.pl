@@ -442,7 +442,17 @@ BEGIN {
         };
     }
 
-    while (<>) {
+    my $h2p        = Lingua::Han::PinYin->new();
+    my $han2pinyin = $h2p->han2pinyin($tmp_ssg_config_file);    # 将汉字转换成拼音
+
+    while ( my ( $key, $value ) = each %services ) {    # ssg预定义服务替换成srx预定义服务
+        $han2pinyin =~ s{$key}{$value}gm;
+    }
+
+    @ssg_config_file = split( /\n/, $han2pinyin );
+
+    # 第一次循环，处理基本元素，如接口，zone，ip，路由，nat，服务，地址
+    foreach (@ssg_config_file) {
         chomp;
 
         # 获取zone与interface的映射关系
@@ -482,52 +492,39 @@ BEGIN {
         }
         elsif ( /\binterface\b/ && /\bmip\b/ ) {        # 获取MIP的实地址和虚地址
             my ( $mip, $host, $mip_type ) = set_mip($_);    # 通过返回值确定host还是net
-            $tmp_ssg_config_file =~
-              s{MIP\($mip\)}{$mip_type\_$host}gm;           # 用MIP实地址替换虚地址
+            $han2pinyin =~ s{MIP\($mip\)}{$mip_type\_$host}gm;    # 用MIP实地址替换虚地址
             next;
         }
-        elsif ( /\bset interface\b/ && /\bdip\b/ ) {        # 获取DIP的id和pool
+        elsif ( /\bset interface\b/ && /\bdip\b/ ) {    # 获取DIP的id和pool
             set_dip($_);
             next;
         }
-        elsif (/\bset scheduler\b/) {                       # 设置时间调度器
+        elsif (/\bset scheduler\b/) {                   # 设置时间调度器
             set_scheduler($_);
             next;
         }
-
-       # elsif ( /policy id/ && /name/ ) {
-       #     $tmp_ssg_config_file =~ s{name\ \"[^"]*\"}{}gm;    # 删除策略名称，只使用策略ID
-       #     next;
-       # }
-        elsif ( /set route/ && /interface/ && !/\bsource\b/ ) {
+        elsif (/\bset route\b/) {                       # 设置路由
             set_route($_);
             next;
         }
     }
-    my $h2p        = Lingua::Han::PinYin->new();
-    my $han2pinyin = $h2p->han2pinyin($tmp_ssg_config_file);    # 将汉字转换成拼音
-    @ssg_config_file = split( /\n/, $han2pinyin );
+    @ssg_config_file = split( /\n/, $han2pinyin );      # 替换了MIP的实地址，需要重新分割
+
+    # 删除空行
+    @ssg_config_file = grep { !/(^$|^\n$|^\s+$)/ } @ssg_config_file;
+
+    # 删除行首尾空格
+    @ssg_config_file = map { s/^\s+|\s+$//gr } @ssg_config_file;
 }
 
-# 删除空行
-@ssg_config_file = grep { !/(^$|^\n$|^\s+$)/ } @ssg_config_file;
-
-# 删除行首尾空格
-@ssg_config_file = map { s/^\s+|\s+$//gr } @ssg_config_file;
-
-# $Data::Dumper::Pair = " : ";
-print Dumper(%zones_interfaces);
-
+# elsif ( /policy id/ && /name/ ) {
+#     $tmp_ssg_config_file =~ s{name\ \"[^"]*\"}{}gm;    # 删除策略名称，只使用策略ID
+#     next;
+# }
+# print Dumper(%zones_interfaces);
 # print Dumper(%services);
 # print Dumper(%RULE_NUM);
 
-# foreach my $key ( keys %zones_interfaces ) {
-#     print "key: $key\n";
-#     foreach my $value ( @{ $zones_interfaces{$key} } ) {
-#         my ( $srx_interface, $ssg_interface ) = each %$value;
-#         print "$srx_interface $ssg_interface\n";
-#     }
-# }
 __END__
 =encoding utf8
 =head1 数据结构
