@@ -12,8 +12,8 @@ use File::Basename;
 use Spreadsheet::Read;
 use Lingua::Han::PinYin;
 use DateTime::Format::Flexible;
-use Regexp::Common qw(net time);
 use Data::Dumper   qw(Dumper);
+use Regexp::Common qw(net time);
 
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 # rewrite ssg2srx.pl                                                                        #
@@ -76,20 +76,19 @@ sub usage {
 # 设置zone与interface的映射关系
 sub set_zone_interface {
     my ( $ssg_interface, $zone, $tag ) = ();
-    my $ssg_config_line = "@_";
 
     # 删除双引号,split后ssg接口和zone还是会多出双引号,故禁用
     # $ssg_config_line =~ s{"}{}g;
 
     if ( /\d+\.\d+/ && /\btag\b/ ) {
         ( $ssg_interface, $tag, $zone ) =
-          ( ( split /\s+/ )[ 2, 4, 6 ], $ssg_config_line );
+          ( split /\s+/ )[ 2, 4, 6 ];
         print
           "Please enter a replacement of $ssg_interface with vlan tag $tag:";
     }
     else {
         ( $ssg_interface, $zone ) =
-          ( ( split /\s+/ )[ 2, 4 ], $ssg_config_line );
+          ( split /\s+/ )[ 2, 4 ];
         print "Please enter a replacement of $ssg_interface:";
     }
 
@@ -108,8 +107,7 @@ sub set_zone_interface {
 
 # 设置接口模式
 sub set_interface_mode {
-    my $ssg_config_line = "@_";
-    my ($mode) = ( ( split /\s+/ )[-1], $ssg_config_line );
+    my ($mode) = ( split /\s+/ )[-1];
 
     # nat模式需要配置源nat
     if ( $mode eq "nat" ) {
@@ -119,8 +117,9 @@ sub set_interface_mode {
 
 # 设置interface的ip和zone
 sub set_interface_ip_zone {
+
     my $ssg_config_line = "@_";
-    my ( $ssg_interface, $ip ) = ( ( split /\s+/ )[ 2, -1 ], $ssg_config_line );
+    my ( $ssg_interface, $ip ) = ( split /\s+/ )[ 2, -1 ];
 
 # 获取ssg接口和ip
 # 循环%zones_interfaces,找到ssg接口对应的srx接口
@@ -183,9 +182,8 @@ set interfaces $href->{$ssg_interface} tunnel destination $ip\n";
 
 # 设置路由
 sub set_route {
-    my $ssg_config_line = "@_";
-    my @route           = ( split /\s+/, $ssg_config_line );
-    my $length          = scalar @route;
+    my @route  = split /\s+/;
+    my $length = scalar @route;
     if (   /\bset route\b/
         && /\binterface\b/
         && /\bgateway\b/
@@ -221,13 +219,11 @@ sub set_route {
         }
         print "set routing-options static route $droute next-hop $gateway\n";
     }
-
 }
 
 # 设置scheduler
 sub set_scheduler {
-    my $ssg_config_line = "@_";
-    my @schedulers      = ( split /\s+/, $ssg_config_line );
+    my @schedulers = split /\s+/;
     switch ( $schedulers[3] ) {
         case ("once") {
             my $start_date = $schedulers[5];
@@ -262,19 +258,31 @@ sub set_scheduler {
 
 # 设置地址簿
 sub set_address_book {
-    my $ssg_config_line = "@_";
+    my ( $zone, $address_book_name, $ip ) = ( split /\s+/ )[ 2, 3, 4 ];
+    if ( $zone ne "Global" ) {
+        unless ( ( $ip =~ /(?!\s+)$RE{net}{domain}/ ) ) {    # 常规zone地址簿
+            my $netmask = ( split /\s+/ )[5];
+            print
+"set security zones security-zone $zone address-book address $address_book_name "
+              . NetAddr::IP->new( $ip, $netmask ) . "\n";
+        }
+        else {                                               # 匹配域名，支持带空格的域名
+            print
+"set security zones security-zone $zone address-book address $address_book_name dns-name $ip\n";
+        }
+    }
+    else {                                                   # 全局地址簿
 
+    }
 }
 
 # 设置地址集合
 sub set_address_set {
-    my $ssg_config_line = "@_";
 
 }
 
 # 设置服务
 sub set_service {
-    my $ssg_config_line = "@_";
     my ( $service_name, $protocol, $sport, $dport ) =
       ( split /\s+/ )[ 2, 4, 6, 8 ];
     $service_name =~ s{\/}{-}g;
@@ -284,7 +292,6 @@ sub set_service {
 
 # 设置服务集合
 sub set_service_set {
-    my $ssg_config_line = "@_";
     my ( $service_group_name, $service ) = ( split /\s+/ )[ 3, -1 ];
     $service            =~ s{\/}{-}g;
     $service_group_name =~ s{\/}{-}g;
@@ -294,7 +301,6 @@ sub set_service_set {
 
 # 设置screen
 sub set_screen {
-    my $ssg_config_line = "@_";
 
 }
 
@@ -304,10 +310,10 @@ sub set_nat {
 
 # 设置静态nat
 sub set_mip {
-    my $ssg_config_line = "@_";
+
+    # 获取MIP绑定的接口，实部和虚部地址以及子网掩码
     my ( $ssg_interface, $virtual_ip, $real_ip, $netmask ) =
-      ( ( split /\s+/ )[ 2, 4, 6, -3 ], $ssg_config_line )
-      ;    # 获取MIP绑定的接口，实部和虚部地址以及子网掩码
+      ( split /\s+/ )[ 2, 4, 6, -3 ];
     $ssg_interface =~ s{"}{}g;
     foreach my $zone ( sort keys %zones_interfaces ) {
         foreach my $href ( @{ $zones_interfaces{$zone} } ) {
@@ -455,8 +461,21 @@ BEGIN {
     foreach (@ssg_config_file) {
         chomp;
 
+        if ( /set service/ && /(protocol|\+)/ ) {    # 配置服务
+            set_service($_);
+            next;
+        }
+        elsif ( /set group service/ && /\badd\b/ ) {    # 配置服务集合
+            set_service_set($_);
+            next;
+        }
+        elsif (/\bset scheduler\b/) {                   # 设置时间调度器
+            set_scheduler($_);
+            next;
+        }
+
         # 获取zone与interface的映射关系
-        if ( /\bset interface\b/ && /\bzone\b/ && !/\b(HA|Null)\b/ ) {
+        elsif ( /\bset interface\b/ && /\bzone\b/ && !/\b(HA|Null)\b/ ) {
             my $zone = set_zone_interface($_);
 
             # 设置每个zone的MIP初始id为0
@@ -482,14 +501,6 @@ BEGIN {
             set_interface_ip_zone($_);
             next;
         }
-        elsif ( /set service/ && /(protocol|\+)/ ) {    # 配置服务
-            set_service($_);
-            next;
-        }
-        elsif ( /set group service/ && /\badd\b/ ) {    # 配置服务集合
-            set_service_set($_);
-            next;
-        }
         elsif ( /\binterface\b/ && /\bmip\b/ ) {        # 获取MIP的实地址和虚地址
             my ( $mip, $host, $mip_type ) = set_mip($_);    # 通过返回值确定host还是net
             $han2pinyin =~ s{MIP\($mip\)}{$mip_type\_$host}gm;    # 用MIP实地址替换虚地址
@@ -499,8 +510,12 @@ BEGIN {
             set_dip($_);
             next;
         }
-        elsif (/\bset scheduler\b/) {                   # 设置时间调度器
-            set_scheduler($_);
+        elsif (/\bset address\b/) {                     # 配置地址簿
+            set_address_book($_);
+            next;
+        }
+        elsif (/\bset group address\b/) {               # 配置地址簿集
+            set_address_set($_);
             next;
         }
         elsif (/\bset route\b/) {                       # 设置路由
