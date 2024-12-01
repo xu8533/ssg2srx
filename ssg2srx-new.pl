@@ -101,7 +101,6 @@ sub set_zone_interface {
     push @{ $zones_interfaces{$zone} }, { $ssg_interface => $srx_interface };
     $ssg_srx_interface{$ssg_interface} = $srx_interface;
 
-   # print "set security zones security-zone $zone interfaces $srx_interface\n";
     return $zone;
 }
 
@@ -193,11 +192,15 @@ sub set_route {
             my ( $droute, $gateway, $preference ) = ( split /\s+/ )[ 2, 6, 8 ];
             print
 "set routing-options static route $droute next-hop $gateway preference $preference\n";
+            my $zone = $lpm_pairs{"$gateway"};
+            $lpm_pairs{"$droute"} = $zone;
         }
         else {
             my ( $droute, $gateway ) = ( split /\s+/ )[ 2, 6 ];
             print
               "set routing-options static route $droute next-hop $gateway\n";
+            my $zone = $lpm_pairs{"$gateway"};
+            $lpm_pairs{"$droute"} = $zone;
         }
     }
     elsif ( /\bset route\b/ && /\bsource\b/ && /\b(interface|gateway)\b/ ) {
@@ -205,19 +208,30 @@ sub set_route {
             my ( $droute, $gateway, $preference ) = ( split /\s+/ )[ 2, 4, 6 ];
             print
 "set routing-options static route $droute next-hop $gateway preference $preference\n";
+            my $zone = $lpm_pairs{"$gateway"};
+            $lpm_pairs{"$droute"} = $zone;
         }
         else {
             my ( $droute, $gateway ) = ( split /\s+/ )[ 2, 4 ];
             print
               "set routing-options static route $droute next-hop $gateway\n";
+            my $zone = $lpm_pairs{"$gateway"};
+            $lpm_pairs{"$droute"} = $zone;
         }
     }
     elsif ( /\bset route\b/ && /\b(interface|gateway)\b/ && $length == 5 ) {
         my ( $droute, $gateway ) = ( split /\s+/ )[ 2, 4 ];
-        if ( $gateway =~ /^\w+\.\d+$/ ) {
-            $gateway = $ssg_srx_interface{$gateway};
+        if ( $gateway =~ /$RE{net}{IPv4}/ ) {    # 下一跳是ip
+            print
+              "set routing-options static route $droute next-hop $gateway\n";
+            my $zone = $lpm_pairs{"$gateway"};
+            $lpm_pairs{"$droute"} = $zone;
         }
-        print "set routing-options static route $droute next-hop $gateway\n";
+        else {                                   # 下一跳是ssg接口
+            $gateway = $ssg_srx_interface{$gateway};
+            print
+              "set routing-options static route $droute next-hop $gateway\n";
+        }
     }
 }
 
@@ -272,13 +286,52 @@ sub set_address_book {
         }
     }
     else {                                                   # 全局地址簿
-
+        if ( exists $mip_address_pairs{$ip} ) {              # 检查是否为mip地址
+            $ip                = $mip_address_pairs{$ip};
+            $address_book_name = "Host_$ip";
+        }
+        unless ( ( $ip =~ /(?!\s+)$RE{net}{domain}/ ) ) {    # 常规zone地址簿
+            my $netmask = ( split /\s+/ )[5];
+            $zone = $lpm->lookup("$ip");
+            print
+"set security zones security-zone $zone address-book address $address_book_name "
+              . NetAddr::IP->new( $ip, $netmask ) . "\n";
+        }
+        else {                                               # 匹配域名，支持带空格的域名
+            $zone = $lpm_pairs{"0.0.0.0/0"};                 # 域名统一使用默认路由对应的zone
+            print
+"set security zones security-zone $zone address-book address $address_book_name dns-name $ip\n";
+        }
     }
 }
 
 # 设置地址集合
 sub set_address_set {
-
+    my ( $zone, $address_set_name, $address_book_name ) =
+      ( split /\s+/ )[ 3, 4, 6 ];
+    if ( $zone ne "Global" ) {
+        print
+"set security zones security-zone $zone address-book address $address_set_name address $address_book_name\n";
+    }
+    else {    # 全局地址簿集
+        if ( ( $address_book_name =~ /(?!\s+)$RE{net}{domain}/ ) ) { # 常规zone地址簿
+            $zone = $lpm_pairs{"0.0.0.0/0"};    # 域名统一使用默认路由对应的zone
+            print
+"set security zones security-zone $zone address-book address $address_set_name address $address_book_name\n";
+        }
+        else {
+            # $address_book_name =~ /(\d{1,3}(?:\.\d{1,3}){3})/;
+            $address_book_name =~ /$RE{net}{IPv4}/;
+            my $ip = $&;                               # 匹配到的ip部分赋值给$ip
+            if ( exists $mip_address_pairs{$ip} ) {    # 检查是否为mip地址
+                $ip                = $mip_address_pairs{$ip};
+                $address_book_name = "Host_$ip";
+            }
+            $zone = $lpm->lookup("$ip");
+            print
+"set security zones security-zone $zone address-book address $address_set_name address $address_book_name\n";
+        }
+    }
 }
 
 # 设置服务
@@ -510,14 +563,6 @@ BEGIN {
             set_dip($_);
             next;
         }
-        elsif (/\bset address\b/) {                     # 配置地址簿
-            set_address_book($_);
-            next;
-        }
-        elsif (/\bset group address\b/) {               # 配置地址簿集
-            set_address_set($_);
-            next;
-        }
         elsif (/\bset route\b/) {                       # 设置路由
             set_route($_);
             next;
@@ -532,13 +577,25 @@ BEGIN {
     @ssg_config_file = map { s/^\s+|\s+$//gr } @ssg_config_file;
 }
 
+foreach (@ssg_config_file) {    # 第二次循环，处理地址簿，策略
+    if (/\bset address\b/) {    # 配置地址簿
+        set_address_book($_);
+        next;
+    }
+    elsif ( /\bset group address\b/ && /\badd\b/ ) {    # 配置地址簿集
+        set_address_set($_);
+        next;
+    }
+}
+
 # elsif ( /policy id/ && /name/ ) {
 #     $tmp_ssg_config_file =~ s{name\ \"[^"]*\"}{}gm;    # 删除策略名称，只使用策略ID
 #     next;
 # }
-# print Dumper(%zones_interfaces);
-# print Dumper(%services);
-# print Dumper(%RULE_NUM);
+# print Dumper( \%zones_interfaces );
+
+# print Dumper(\%services);
+# print Dumper(\%RULE_NUM);
 
 __END__
 =encoding utf8
