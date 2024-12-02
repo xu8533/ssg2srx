@@ -20,13 +20,13 @@ use Regexp::Common qw(net time);
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 
 # 定义变量
-my $workbook        = ();    # 保存excel文件
-my $worksheet       = ();    # 保存excel文件中的工作表
-my $excel_row       = 0;     # excel对比文件行数
-my $lpm             = ();
-my @ssg_config_file = ();    # 保存ssg配置文件
-my %lpm_pairs;               # 保存路由/ip与zone的映射关系，供lpm使用
-my %services;                # 保存ssg服务名与srx服务名的映射关系
+my $workbook;           # 保存excel文件
+my $worksheet;          # 保存excel文件中的工作表
+my $excel_row = 0;      # excel对比文件行数
+my $lpm;                # 用于查找ip所在zone
+my @ssg_config_file;    # 保存ssg配置文件，不赋值，否则正文循环时会清空配置
+my %lpm_pairs;          # 保存路由/ip与zone的映射关系，供lpm使用
+my %services;           # 保存ssg服务名与srx服务名的映射关系
 
 # 保存命令选项值
 our ( $opt_c, $opt_d, $opt_o, $opt_s ) = ();
@@ -146,7 +146,10 @@ sub set_interface_ip_zone {
                     $href->{$ssg_interface} =
                       { $href->{$ssg_interface} => $ip };
                     $ssg_interface_ip{$ssg_interface} = $ip;
-                    $lpm_pairs{"$ip"} = $zone;
+
+                    # 添加接口ip和zone映射，以及接口和zone映射（某些路由的下一跳是ssg接口）
+                    $lpm_pairs{"$ssg_interface"} = $zone;
+                    $lpm->add( "$ip", "$zone" );
                     last START;
                 }
                 else {    # 处理tunnel接口
@@ -163,14 +166,16 @@ sub set_interface_ip_zone {
 set interfaces $href->{$ssg_interface} tunnel source $source\n";
                         }
                         else {                                  # source为ssg接口
-                            my $ip =
+                            my $source_ip =
                               NetAddr::IP->new( $ssg_interface_ip{$source} );
                             print
 "set interfaces $href->{$ssg_interface} tunnel source ",
-                              $ip->addr;
+                              $source_ip->addr;
                         }
                         print "
 set interfaces $href->{$ssg_interface} tunnel destination $ip\n";
+
+                        $lpm_pairs{"$ssg_interface"} = $zone;
                         last START;
                     }
                 }
@@ -192,45 +197,35 @@ sub set_route {
             my ( $droute, $gateway, $preference ) = ( split /\s+/ )[ 2, 6, 8 ];
             print
 "set routing-options static route $droute next-hop $gateway preference $preference\n";
-            my $zone = $lpm_pairs{"$gateway"};
-            $lpm_pairs{"$droute"} = $zone;
+            my $zone = $lpm->lookup("$gateway");
+            $lpm->add( "$droute", "$zone" );
         }
         else {
             my ( $droute, $gateway ) = ( split /\s+/ )[ 2, 6 ];
             print
               "set routing-options static route $droute next-hop $gateway\n";
-            my $zone = $lpm_pairs{"$gateway"};
-            $lpm_pairs{"$droute"} = $zone;
+            my $zone = $lpm->lookup("$gateway");
+            $lpm->add( "$droute", "$zone" );
         }
     }
-    elsif ( /\bset route\b/ && /\bsource\b/ && /\b(interface|gateway)\b/ ) {
-        if (/\bpreference\b/) {
-            my ( $droute, $gateway, $preference ) = ( split /\s+/ )[ 2, 4, 6 ];
-            print
-"set routing-options static route $droute next-hop $gateway preference $preference\n";
-            my $zone = $lpm_pairs{"$gateway"};
-            $lpm_pairs{"$droute"} = $zone;
-        }
-        else {
-            my ( $droute, $gateway ) = ( split /\s+/ )[ 2, 4 ];
-            print
-              "set routing-options static route $droute next-hop $gateway\n";
-            my $zone = $lpm_pairs{"$gateway"};
-            $lpm_pairs{"$droute"} = $zone;
-        }
+    elsif ( /\bset route\b/ && /\bsource\b/ && /\b(interface|gateway)\b/ )
+    {    # 源路由(fbf)
+        my ( $source, $gateway ) = ( split /\s+/ )[ 3, -1 ];
     }
     elsif ( /\bset route\b/ && /\b(interface|gateway)\b/ && $length == 5 ) {
         my ( $droute, $gateway ) = ( split /\s+/ )[ 2, 4 ];
         if ( $gateway =~ /$RE{net}{IPv4}/ ) {    # 下一跳是ip
             print
               "set routing-options static route $droute next-hop $gateway\n";
-            my $zone = $lpm_pairs{"$gateway"};
-            $lpm_pairs{"$droute"} = $zone;
+            my $zone = $lpm->lookup("$gateway");
+            $lpm->add( "$droute", "$zone" );
         }
-        else {                                   # 下一跳是ssg接口
+        else {                                   # 下一跳是接口
             $gateway = $ssg_srx_interface{$gateway};
             print
               "set routing-options static route $droute next-hop $gateway\n";
+            my $zone = $lpm_pairs{"$gateway"};
+            $lpm->add( "$droute", "$zone" );
         }
     }
 }
@@ -273,6 +268,7 @@ sub set_scheduler {
 # 设置地址簿
 sub set_address_book {
     my ( $zone, $address_book_name, $ip ) = ( split /\s+/ )[ 2, 3, 4 ];
+    $zone =~ s{"}{}g;    #删除双引号
     if ( $zone ne "Global" ) {
         unless ( ( $ip =~ /(?!\s+)$RE{net}{domain}/ ) ) {    # 常规zone地址簿
             my $netmask = ( split /\s+/ )[5];
@@ -308,21 +304,23 @@ sub set_address_book {
 # 设置地址集合
 sub set_address_set {
     my ( $zone, $address_set_name, $address_book_name ) =
-      ( split /\s+/ )[ 3, 4, 6 ];
-    if ( $zone ne "Global" ) {
+      ( split /\s+/ )[ 3, 4, -1 ];
+    $zone =~ s{"}{}g;             #删除双引号
+    if ( $zone ne "Global" ) {    # 非全局地址集合
         print
 "set security zones security-zone $zone address-book address $address_set_name address $address_book_name\n";
     }
-    else {    # 全局地址簿集
-        if ( ( $address_book_name =~ /(?!\s+)$RE{net}{domain}/ ) ) { # 常规zone地址簿
+    else {                        # 全局地址簿集
+        print "else\n";
+        if ( ( $address_book_name =~ /(?!\s+)$RE{net}{domain}/ ) ) {    # 域名地址簿
             $zone = $lpm_pairs{"0.0.0.0/0"};    # 域名统一使用默认路由对应的zone
             print
 "set security zones security-zone $zone address-book address $address_set_name address $address_book_name\n";
         }
         else {
-            # $address_book_name =~ /(\d{1,3}(?:\.\d{1,3}){3})/;
             $address_book_name =~ /$RE{net}{IPv4}/;
-            my $ip = $&;                               # 匹配到的ip部分赋值给$ip
+            my $ip = $&;                        # 匹配到的ip部分赋值给$ip
+            print "ip is $ip\n";
             if ( exists $mip_address_pairs{$ip} ) {    # 检查是否为mip地址
                 $ip                = $mip_address_pairs{$ip};
                 $address_book_name = "Host_$ip";
@@ -426,7 +424,7 @@ sub set_vip {
 
 # 设置策略
 sub set_policy {
-    my $ssg_config_line = "@_";
+
 }
 
 # 中文翻译成拼音
@@ -508,13 +506,13 @@ BEGIN {
         $han2pinyin =~ s{$key}{$value}gm;
     }
 
+    $lpm             = Net::IP::LPM->new();             # 初始化最长前缀匹配
     @ssg_config_file = split( /\n/, $han2pinyin );
 
-    # 第一次循环，处理基本元素，如接口，zone，ip，路由，nat，服务，地址
+    # 第一次循环，处理接口，zone，ip，路由，nat，服务
     foreach (@ssg_config_file) {
         chomp;
-
-        if ( /set service/ && /(protocol|\+)/ ) {    # 配置服务
+        if ( /set service/ && /(protocol|\+)/ ) {       # 配置服务
             set_service($_);
             next;
         }
@@ -554,11 +552,12 @@ BEGIN {
             set_interface_ip_zone($_);
             next;
         }
-        elsif ( /\binterface\b/ && /\bmip\b/ ) {        # 获取MIP的实地址和虚地址
-            my ( $mip, $host, $mip_type ) = set_mip($_);    # 通过返回值确定host还是net
-            $han2pinyin =~ s{MIP\($mip\)}{$mip_type\_$host}gm;    # 用MIP实地址替换虚地址
-            next;
-        }
+
+      # elsif ( /\binterface\b/ && /\bmip\b/ ) {        # 获取MIP的实地址和虚地址
+      #     my ( $mip, $host, $mip_type ) = set_mip($_);    # 通过返回值确定host还是net
+      #     $han2pinyin =~ s{MIP\($mip\)}{$mip_type\_$host}gm;    # 用MIP实地址替换虚地址
+      #     next;
+      # }
         elsif ( /\bset interface\b/ && /\bdip\b/ ) {    # 获取DIP的id和pool
             set_dip($_);
             next;
@@ -577,7 +576,16 @@ BEGIN {
     @ssg_config_file = map { s/^\s+|\s+$//gr } @ssg_config_file;
 }
 
-foreach (@ssg_config_file) {    # 第二次循环，处理地址簿，策略
+# 加入lpm，后期ip通过lpm找到zone
+# $lpm = Net::IP::LPM->new();
+# while ( my ( $route, $zone ) = each %lpm_pairs ) {
+#     $lpm->add( "$route", "$zone" );
+# }
+# my $ref = $lpm->dump();
+# print Dumper($ref);
+
+# 第二次循环，处理地址簿，策略
+foreach (@ssg_config_file) {
     if (/\bset address\b/) {    # 配置地址簿
         set_address_book($_);
         next;
@@ -593,8 +601,9 @@ foreach (@ssg_config_file) {    # 第二次循环，处理地址簿，策略
 #     next;
 # }
 # print Dumper( \%zones_interfaces );
-
-# print Dumper(\%services);
+# print Dumper( \%lpm_pairs );
+# print Dumper( \$lpm );
+# print Dumper( \%services );
 # print Dumper(\%RULE_NUM);
 
 __END__
