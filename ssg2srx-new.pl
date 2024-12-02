@@ -291,7 +291,7 @@ sub set_address_book {
               . NetAddr::IP->new( $ip, $netmask ) . "\n";
         }
         else {                                               # 匹配域名，支持带空格的域名
-            $zone = $lpm->lookup("0.0.0.0/0");               # 域名统一使用默认路由对应的zone
+            $zone = $lpm->lookup("0.0.0.0");                 # 域名统一使用默认路由对应的zone
             print
 "set security zones security-zone $zone address-book address $address_book_name dns-name $ip\n";
         }
@@ -317,7 +317,7 @@ sub set_address_set {
             $zone = $lpm->lookup("$ip");
         }
         elsif ( ( $address_book_name =~ /(?!\s+)$RE{net}{domain}/ ) ) {  # 域名地址簿
-            $zone = $lpm->lookup("0.0.0.0/0");    # 域名统一使用默认路由对应的zone
+            $zone = $lpm->lookup("0.0.0.0");    # 域名统一使用默认路由对应的zone
         }
         print
 "set security zones security-zone $zone address-book address-set $address_set_name address $address_book_name\n";
@@ -380,6 +380,10 @@ sub set_mip {
                 my $tag               = "net";
                 my $tmp_srx_interface = $ssg_srx_interface{$ssg_interface};
                 $tmp_srx_interface =~ s/\./_/;
+
+                # 重构地址形式
+                $virtual_ip = NetAddr::IP->new( $virtual_ip, $netmask );
+                $real_ip    = NetAddr::IP->new( $real_ip,    $netmask );
                 print
 "set security nat static rule-set $zone\_$tmp_srx_interface rule $zone\_$RULE_NUM{$zone}  match destination-address $virtual_ip\n";
                 print
@@ -554,26 +558,29 @@ BEGIN {
         }
     }
 
+    # $lpm->rebuild();
+
     # 第二次循环，处理MIP，地址簿
     foreach (@ssg_config_file) {
-        if ( /\binterface\b/ && /\bmip\b/ ) {           # 获取MIP的实地址和虚地址
+        if ( /\binterface\b/ && /\bmip\b/ ) {    # 获取MIP的实地址和虚地址
             my ( $mip, $host, $mip_type ) = set_mip($_);    # 通过返回值确定host还是net
             $han2pinyin =~ s{MIP\($mip\)}{$mip_type\_$host}gm;    # 用MIP实地址替换虚地址
-            my $real_zone = $lpm->lookup("$host");
+            my $strip_ip  = split( /\//, $host );
+            my $real_zone = $lpm->lookup("$strip_ip");
             print
 "set security zones security-zone $real_zone address-book address $mip_type\_$host $host\n";
             next;
         }
-        elsif (/\bset address\b/) {                               # 配置地址簿
+        elsif (/\bset address\b/) {    # 配置地址簿
             set_address_book($_);
             next;
         }
-        elsif ( /\bset group address\b/ && /\badd\b/ ) {          # 配置地址簿集
+        elsif ( /\bset group address\b/ && /\badd\b/ ) {    # 配置地址簿集
             set_address_set($_);
             next;
         }
     }
-    @ssg_config_file = split( /\n/, $han2pinyin );    # 替换了MIP的实地址，需要重新分割
+    @ssg_config_file = split( /\n/, $han2pinyin );          # 替换了MIP的实地址，需要重新分割
 
     # 删除空行
     @ssg_config_file = grep { !/(^$|^\n$|^\s+$)/ } @ssg_config_file;
@@ -585,7 +592,8 @@ BEGIN {
 # 加入lpm，后期ip通过lpm找到zone
 my $ref = $lpm->dump();
 print Dumper($ref);
-print Dumper( \%lpm_pairs );
+
+# print Dumper( \%lpm_pairs );
 
 # 第三次循环，处理策略
 foreach (@ssg_config_file) {
@@ -603,7 +611,7 @@ foreach (@ssg_config_file) {
 
 __END__
 =encoding utf8
-=head1 数据结构
+=head2 数据结构
 =item %zones_interfaces
 %zones_interfaces=> {
     zone1=>[
