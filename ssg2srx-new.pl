@@ -291,7 +291,7 @@ sub set_address_book {
               . NetAddr::IP->new( $ip, $netmask ) . "\n";
         }
         else {                                               # 匹配域名，支持带空格的域名
-            $zone = $lpm_pairs{"0.0.0.0/0"};                 # 域名统一使用默认路由对应的zone
+            $zone = $lpm->lookup("0.0.0.0/0");               # 域名统一使用默认路由对应的zone
             print
 "set security zones security-zone $zone address-book address $address_book_name dns-name $ip\n";
         }
@@ -305,27 +305,22 @@ sub set_address_set {
     $zone =~ s{"}{}g;             #删除双引号
     if ( $zone ne "Global" ) {    # 非全局地址集合
         print
-"set security zones security-zone $zone address-book address $address_set_name address $address_book_name\n";
+"set security zones security-zone $zone address-book address-set $address_set_name address $address_book_name\n";
     }
     else {                        # 全局地址簿集
-        print "else\n";
-        if ( ( $address_book_name =~ /(?!\s+)$RE{net}{domain}/ ) ) {    # 域名地址簿
-            $zone = $lpm_pairs{"0.0.0.0/0"};    # 域名统一使用默认路由对应的zone
-            print
-"set security zones security-zone $zone address-book address $address_set_name address $address_book_name\n";
-        }
-        else {
-            $address_book_name =~ /$RE{net}{IPv4}/;
-            my $ip = $&;                        # 匹配到的ip部分赋值给$ip
-            print "ip is $ip\n";
+        if ( $address_book_name =~ /$RE{net}{IPv4}/ ) {
+            my $ip = $&;                               # 匹配到的ip部分赋值给$ip
             if ( exists $mip_address_pairs{$ip} ) {    # 检查是否为mip地址
                 $ip                = $mip_address_pairs{$ip};
                 $address_book_name = "Host_$ip";
             }
             $zone = $lpm->lookup("$ip");
-            print
-"set security zones security-zone $zone address-book address $address_set_name address $address_book_name\n";
         }
+        elsif ( ( $address_book_name =~ /(?!\s+)$RE{net}{domain}/ ) ) {  # 域名地址簿
+            $zone = $lpm->lookup("0.0.0.0/0");    # 域名统一使用默认路由对应的zone
+        }
+        print
+"set security zones security-zone $zone address-book address-set $address_set_name address $address_book_name\n";
     }
 }
 
@@ -549,12 +544,6 @@ BEGIN {
             set_interface_ip_zone($_);
             next;
         }
-
-      # elsif ( /\binterface\b/ && /\bmip\b/ ) {        # 获取MIP的实地址和虚地址
-      #     my ( $mip, $host, $mip_type ) = set_mip($_);    # 通过返回值确定host还是net
-      #     $han2pinyin =~ s{MIP\($mip\)}{$mip_type\_$host}gm;    # 用MIP实地址替换虚地址
-      #     next;
-      # }
         elsif ( /\bset interface\b/ && /\bdip\b/ ) {    # 获取DIP的id和pool
             set_dip($_);
             next;
@@ -564,7 +553,27 @@ BEGIN {
             next;
         }
     }
-    @ssg_config_file = split( /\n/, $han2pinyin );      # 替换了MIP的实地址，需要重新分割
+
+    # 第二次循环，处理MIP，地址簿
+    foreach (@ssg_config_file) {
+        if ( /\binterface\b/ && /\bmip\b/ ) {           # 获取MIP的实地址和虚地址
+            my ( $mip, $host, $mip_type ) = set_mip($_);    # 通过返回值确定host还是net
+            $han2pinyin =~ s{MIP\($mip\)}{$mip_type\_$host}gm;    # 用MIP实地址替换虚地址
+            my $real_zone = $lpm->lookup("$host");
+            print
+"set security zones security-zone $real_zone address-book address $mip_type\_$host $host\n";
+            next;
+        }
+        elsif (/\bset address\b/) {                               # 配置地址簿
+            set_address_book($_);
+            next;
+        }
+        elsif ( /\bset group address\b/ && /\badd\b/ ) {          # 配置地址簿集
+            set_address_set($_);
+            next;
+        }
+    }
+    @ssg_config_file = split( /\n/, $han2pinyin );    # 替换了MIP的实地址，需要重新分割
 
     # 删除空行
     @ssg_config_file = grep { !/(^$|^\n$|^\s+$)/ } @ssg_config_file;
@@ -574,23 +583,12 @@ BEGIN {
 }
 
 # 加入lpm，后期ip通过lpm找到zone
-# $lpm = Net::IP::LPM->new();
-# while ( my ( $route, $zone ) = each %lpm_pairs ) {
-#     $lpm->add( "$route", "$zone" );
-# }
-# my $ref = $lpm->dump();
-# print Dumper($ref);
+my $ref = $lpm->dump();
+print Dumper($ref);
+print Dumper( \%lpm_pairs );
 
-# 第二次循环，处理地址簿，策略
+# 第三次循环，处理策略
 foreach (@ssg_config_file) {
-    if (/\bset address\b/) {    # 配置地址簿
-        set_address_book($_);
-        next;
-    }
-    elsif ( /\bset group address\b/ && /\badd\b/ ) {    # 配置地址簿集
-        set_address_set($_);
-        next;
-    }
 }
 
 # elsif ( /policy id/ && /name/ ) {
@@ -645,13 +643,25 @@ __END__
 }
 
 =item %dip_pool
-my %dip_pool=>{
+%dip_pool=>{
     {pool_id1 => ip1}
     {pool_id2 => ip2}
 }
 
 =item %RULE_NUM
-my %RULE_NUM=>{
+%RULE_NUM=>{
     {zone1 => rule_id1}
     {zone2 => rule_id2}
+}
+
+=item %lpm_pairs
+%lpm_pairs=>{
+    {ssg接口1 => zone1}
+    {ssg接口2 => zone2}
+}
+
+=item $lpm
+$lpm=>{
+    {route1 => zone1},
+    {route2 => zone2},
 }
