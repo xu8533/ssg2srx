@@ -25,7 +25,7 @@ my $worksheet;          # 保存excel文件中的工作表
 my $excel_row = 0;      # excel对比文件行数
 my $lpm;                # 用于查找ip所在zone
 my @ssg_config_file;    # 保存ssg配置文件，不赋值，否则正文循环时会清空配置
-my %lpm_pairs;          # 保存路由/ip与zone的映射关系，供lpm使用
+my %lpm_pairs;          # 保存接口与zone的映射关系，用于设置路由下一跳为接口时对应zone
 my %services;           # 保存ssg服务名与srx服务名的映射关系
 
 # 保存命令选项值
@@ -97,9 +97,10 @@ sub set_zone_interface {
     $ssg_interface =~ s{"}{}g;
     $zone          =~ s{"}{}g;
 
-    chomp( my $srx_interface = <STDIN> );    # 用户输入新的srx接口
+    chomp( my $srx_interface = <STDIN> );          # 用户输入新的srx接口
     push @{ $zones_interfaces{$zone} }, { $ssg_interface => $srx_interface };
     $ssg_srx_interface{$ssg_interface} = $srx_interface;
+    $lpm_pairs{"$ssg_interface"}       = $zone;    # 接口和zone映射（某些路由的下一跳是ssg接口）
 
     return $zone;
 }
@@ -147,12 +148,10 @@ sub set_interface_ip_zone {
                       { $href->{$ssg_interface} => $ip };
                     $ssg_interface_ip{$ssg_interface} = $ip;
 
-                    # 添加接口ip和zone映射，以及接口和zone映射（某些路由的下一跳是ssg接口）
-                    $lpm_pairs{"$ssg_interface"} = $zone;
-                    $lpm->add( "$ip", "$zone" );
+                    $lpm->add( "$ip", "$zone" );    # 添加接口ip和zone映射
                     last START;
                 }
-                else {    # 处理tunnel接口
+                else {                              # 处理tunnel接口
                     if ( $ssg_config_line =~ /\bip unnumbered\b/ ) {
                         print
 "set interfaces $href->{$ssg_interface} family inet unnumbered-address $ssg_srx_interface{$ip}\n";
@@ -174,8 +173,6 @@ set interfaces $href->{$ssg_interface} tunnel source $source\n";
                         }
                         print "
 set interfaces $href->{$ssg_interface} tunnel destination $ip\n";
-
-                        $lpm_pairs{"$ssg_interface"} = $zone;
                         last START;
                     }
                 }
@@ -221,9 +218,9 @@ sub set_route {
             $lpm->add( "$droute", "$zone" );
         }
         else {                                   # 下一跳是接口
-            $gateway = $ssg_srx_interface{$gateway};
+            my $srx_interface_gateway = $ssg_srx_interface{$gateway};
             print
-              "set routing-options static route $droute next-hop $gateway\n";
+"set routing-options static route $droute next-hop $srx_interface_gateway\n";
             my $zone = $lpm_pairs{"$gateway"};
             $lpm->add( "$droute", "$zone" );
         }
