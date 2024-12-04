@@ -207,22 +207,38 @@ sub set_route {
     }
     elsif ( /\bset route\b/ && /\bsource\b/ && /\b(interface|gateway)\b/ )
     {    # 源路由(fbf)
-        my ( $source, $gateway ) = ( split /\s+/ )[ 3, -1 ];
+        if (/\bin-interface\b/) {    # 基于源接口的路由
+            my ( $source_interface, $source, $gateway ) =
+              ( split /\s+/ )[ 4, 5, 9 ];
+            print
+"set firewall family inet filter fbf_$gateway term $source from source-address $source\n";
+            print
+"set firewall family inet filter fbf_$gateway term $source from source-interface $ssg_srx_interface{source_interface}\n";
+        }
+        else {                       # 源路由
+            my ( $source, $gateway ) = ( split /\s+/ )[ 3, 7 ];
+            print
+              " set firewall family inet filter fbf_ $gateway term $source from
+          source-address $source\n ";
+            print
+              " set firewall family inet filter fbf_ $gateway term $source then
+          next -hop $gateway\n ";
+        }
     }
     elsif ( /\bset route\b/ && /\b(interface|gateway)\b/ && $length == 5 ) {
         my ( $droute, $gateway ) = ( split /\s+/ )[ 2, 4 ];
         if ( $gateway =~ /$RE{net}{IPv4}/ ) {    # 下一跳是ip
             print
-              "set routing-options static route $droute next-hop $gateway\n";
-            my $zone = $lpm->lookup("$gateway");
-            $lpm->add( "$droute", "$zone" );
+              " set routing-options static route $droute next -hop $gateway\n ";
+            my $zone = $lpm->lookup("$gateway ");
+            $lpm->add( "$droute ", "$zone " );
         }
         else {                                   # 下一跳是接口
             my $srx_interface_gateway = $ssg_srx_interface{$gateway};
             print
-"set routing-options static route $droute next-hop $srx_interface_gateway\n";
-            my $zone = $lpm_pairs{"$gateway"};
-            $lpm->add( "$droute", "$zone" );
+" set routing-options static route $droute next -hop $srx_interface_gateway\n ";
+            my $zone = $lpm_pairs{"$gateway "};
+            $lpm->add( "$droute ", "$zone " );
         }
     }
 }
@@ -231,32 +247,32 @@ sub set_route {
 sub set_scheduler {
     my @schedulers = split /\s+/;
     switch ( $schedulers[3] ) {
-        case ("once") {
+        case (" once ") {
             my $start_date = $schedulers[5];
             my $start_time = $schedulers[6];
             my $stop_date  = $schedulers[8];
             my $stop_time  = $schedulers[9];
             if ( $start_date =~ $RE{time}{mdy} && $stop_date =~ $RE{time}{mdy} )
             {    # ssg使用美式风格时间，srx使用ISO-8601格式时间，但T分隔符需替换成.号
-                $start_time = "$start_time:0";    # 补足时间，否则会出现无法解析的错误
-                $stop_time  = "$stop_time:0";
+                $start_time = "$start_time : 0 ";    # 补足时间，否则会出现无法解析的错误
+                $stop_time  = "$stop_time : 0 ";
                 $start_date = DateTime::Format::Flexible->parse_datetime(
-                    "$start_date $start_time");
+                    "$start_date $start_time ");
                 $stop_date = DateTime::Format::Flexible->parse_datetime(
-                    "$stop_date $stop_time");
+                    "$stop_date $stop_time ");
                 $start_date =~ s{T}{\.};
                 $stop_date  =~ s{T}{\.};
             }
-            print
-"set schedulers scheduler $schedulers[2] start-date $start_date stop-date $stop_date\n";
+            print " set schedulers scheduler $schedulers[2]
+          start-date $start_date stop-date $stop_date\n ";
             return;
         }
-        case ("recurrent") {
+        case (" recurrent ") {
             my $some_day   = $schedulers[4];
             my $start_time = $schedulers[6];
             my $stop_time  = $schedulers[8];
-            print
-"set schedulers scheduler $schedulers[2] $some_day start-time $start_time stop-time $stop_time\n";
+            print " set schedulers scheduler $schedulers[2] $some_day start-
+          time $start_time stop-time $stop_time \n ";
         }
         return;
     }
@@ -265,7 +281,9 @@ sub set_scheduler {
 # 设置地址簿
 sub set_address_book {
     my ( $zone, $address_book_name, $ip ) = ( split /\s+/ )[ 2, 3, 4 ];
-    $zone =~ s{"}{}g;    #删除双引号
+    $zone =~ s{";
+    }
+    {} g;    #删除双引号
     if ( $zone ne "Global" ) {
         unless ( ( $ip =~ /(?!\s+)$RE{net}{domain}/ ) ) {    # 常规zone地址簿
             my $netmask = ( split /\s+/ )[5];
@@ -344,7 +362,22 @@ sub set_service_set {
 
 # 设置screen
 sub set_screen {
-
+    my ( $zone, $screen_name ) = ( split /\s+/ )[ 2, 4 ];
+    if ( $screen_name eq "tear-drop" ) {
+        print "set security screen ids-option $zone ip tear-drop\n";
+    }
+    elsif ( $screen_name eq "syn-flood" ) {
+        print "set security screen ids-option $zone tcp syn-flood\n";
+    }
+    elsif ( $screen_name eq "ping-death" ) {
+        print "set security screen ids-option $zone icmp ping-death\n";
+    }
+    elsif ( $screen_name eq "ip-filter-src" ) {
+        print "set security screen ids-option $zone ip tear-drop\n";
+    }
+    elsif ( $screen_name eq "land" ) {
+        print "set security screen ids-option $zone tcp land\n";
+    }
 }
 
 sub set_nat {
@@ -520,6 +553,10 @@ BEGIN {
             set_scheduler($_);
             next;
         }
+        elsif ( /\bset zone\b/ && /\bscreen\b/ ) {
+            set_screen($_);
+            next;
+        }
 
         # 获取zone与interface的映射关系
         elsif ( /\bset interface\b/ && /\bzone\b/ && !/\b(HA|Null)\b/ ) {
@@ -558,11 +595,9 @@ BEGIN {
         }
     }
 
-    # $lpm->rebuild();
-
     # 第二次循环，处理MIP，地址簿
     foreach (@ssg_config_file) {
-        if ( /\binterface\b/ && /\bmip\b/ ) {    # 获取MIP的实地址和虚地址
+        if ( /\binterface\b/ && /\bmip\b/ ) {           # 获取MIP的实地址和虚地址
             my ( $mip, $host, $mip_type ) = set_mip($_);    # 通过返回值确定host还是net
             $han2pinyin =~ s{MIP\($mip\)}{$mip_type\_$host}gm;    # 用MIP实地址替换虚地址
             my $strip_ip  = split( /\//, $host );
@@ -590,19 +625,18 @@ BEGIN {
 }
 
 # 加入lpm，后期ip通过lpm找到zone
-my $ref = $lpm->dump();
-print Dumper($ref);
-
+# my $ref = $lpm->dump();
+# print Dumper($ref);
 # print Dumper( \%lpm_pairs );
 
 # 第三次循环，处理策略
 foreach (@ssg_config_file) {
+    if ( /policy id/ && /name/ ) {
+        $_ =~ s{name\ \"[^"]*\"}{};    # 删除策略名称，只使用策略ID
+        next;
+    }
 }
 
-# elsif ( /policy id/ && /name/ ) {
-#     $tmp_ssg_config_file =~ s{name\ \"[^"]*\"}{}gm;    # 删除策略名称，只使用策略ID
-#     next;
-# }
 # print Dumper( \%zones_interfaces );
 # print Dumper( \%lpm_pairs );
 # print Dumper( \$lpm );
