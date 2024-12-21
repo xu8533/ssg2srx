@@ -20,13 +20,14 @@ use Regexp::Common qw(net time);
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 
 # 定义变量
-my $workbook;           # 保存excel文件
-my $worksheet;          # 保存excel文件中的工作表
-my $excel_row = 0;      # excel对比文件行数
-my $lpm;                # 用于查找ip所在zone
-my @ssg_config_file;    # 保存ssg配置文件，不赋值，否则正文循环时会清空配置
-my %lpm_pairs;          # 保存接口与zone的映射关系，用于设置路由下一跳为接口时对应zone
-my %services;           # 保存ssg服务名与srx服务名的映射关系
+my $workbook;              # 保存excel文件
+my $worksheet;             # 保存excel文件中的工作表
+my $excel_row = 0;         # excel对比文件行数
+my $lpm;                   # 用于查找ip所在zone
+my @ssg_config_file;       # 保存ssg配置文件，不赋值，否则正文循环时会清空配置
+my @ssg_policy_context;    # 临时保存ssg策略单条策略内容
+my %lpm_pairs;             # 保存接口与zone的映射关系，用于设置路由下一跳为接口时对应zone
+my %services;              # 保存ssg服务名与srx服务名的映射关系
 
 # 保存命令选项值
 our ( $opt_c, $opt_d, $opt_o, $opt_s ) = ();
@@ -281,9 +282,7 @@ sub set_scheduler {
 # 设置地址簿
 sub set_address_book {
     my ( $zone, $address_book_name, $ip ) = ( split /\s+/ )[ 2, 3, 4 ];
-    $zone =~ s{";
-    }
-    {} g;    #删除双引号
+    $zone =~ s{"}{}g;    #删除双引号
     if ( $zone ne "Global" ) {
         unless ( ( $ip =~ /(?!\s+)$RE{net}{domain}/ ) ) {    # 常规zone地址簿
             my $netmask = ( split /\s+/ )[5];
@@ -429,7 +428,7 @@ sub set_mip {
     }
 }
 
-# 设置源nat
+# 设置源nat(dip)
 sub set_dip {
     my ( $dip_id, $start_dip_address, $stop_dip_address ) = ();
     my $ssg_config_line = "@_";
@@ -443,7 +442,13 @@ sub set_dip {
         ( $dip_id, $start_dip_address, $stop_dip_address ) =
           ( split /\s+/ )[ 4, -2, -1 ];
     }
-    $dip_pool{$dip_id} = "$start_dip_address to $stop_dip_address";
+    if ( $ssg_config_line =~ /\bfix-port\b/ ) {
+        $dip_pool{$dip_id} =
+          ("$start_dip_address to $stop_dip_address fix-port");    # 不进行PAT
+    }
+    else {
+        $dip_pool{$dip_id} = ("$start_dip_address to $stop_dip_address");
+    }
 }
 
 # 设置目的nat(virtual ip)
@@ -451,9 +456,73 @@ sub set_vip {
 
 }
 
+# 设置源nat, 策略中的nat src
+sub set_nat_src {
+
+}
+
+# 设置目的nat, 策略中的nat src
+sub set_nat_dst {
+
+}
+
 # 设置策略
 sub set_policy {
+    my @ssg_config_line = "@_";
+    my ( $action, $log, $src_nat, $dst_nat, $policy_toggle, $src_global_toggle,
+        $dst_global_toggle )
+      = ();
 
+    # 获取策略元素
+    my (
+        $policy_id,   $src_zone,    $dst_zone,
+        @src_address, @dst_address, @service
+    ) = ( ( split /\s+/ )[ 3, 5, 7, 8, 9, 10 ], $ssg_config_line[0] );
+
+    # 检测是否为全局策略
+    $src_global_toggle = 1 if ( $src_zone eq "Global" );
+    $dst_global_toggle = 1 if ( $dst_zone eq "Global" );
+
+    foreach (@ssg_config_line) {
+        if ( /\b([Pp]ermit|[Dd]eny)\b/ && /\blog\b/ ) {    # 获取策略动作和日志开启状态
+            $action = ( split /\s+/ )[-2];
+            $log    = ( split /\s+/ )[-1];
+        }
+        elsif (/\b([Pp]ermit|[Dd]eny)\b/) {                # 获取策略动作
+            $action = ( split /\s+/ )[-1];
+        }
+        elsif (/\bset src-address\b/) {                    # 获取策略源地址
+            push @src_address, ( split /\s+/ )[-1];
+            next;
+        }
+        elsif (/\bset dst-addres\b/) {                     # 获取策略目的地址
+            push @dst_address, ( split /\s+/ )[-1];
+            next;
+        }
+        elsif (/\bset service\b/) {                        # 获取策略服务
+            push @service, ( split /\s+/ )[-1];
+            next;
+        }
+        elsif (/\bset log (session-init|session-close)\b/) {    # 获取日志选项
+            $log = ( split /\s+/ )[-1];
+            next;
+        }
+        elsif (/\bset policy id disable\b/) {                   # 是否禁用策略
+            $policy_toggle = ( split /\s+/ )[-1];
+        }
+        elsif (/\bnat src dst ip\b/) {                          # 同时配置源nat和目的nat
+
+        }
+        elsif (/\bnat src dip-id\s+\d+\s+dst ip\b/) {           # 同时配置DIP和目的nat
+
+        }
+        elsif (/\bnat src\b/) {
+
+        }
+        elsif (/\bVIP\(.*\)\b/) {
+
+        }
+    }
 }
 
 # 中文翻译成拼音
@@ -631,8 +700,29 @@ BEGIN {
 
 # 第三次循环，处理策略
 foreach (@ssg_config_file) {
-    if ( /policy id/ && /name/ ) {
-        $_ =~ s{name\ \"[^"]*\"}{};    # 删除策略名称，只使用策略ID
+    chomp;
+
+    # 将策略内容保存到数组，最后调用set_policy统一处理
+    if (/\bset policy id \d+\b/) {
+        if (@ssg_policy_context) {    # 处理上一条策略只有一行的情况
+            set_policy(@ssg_policy_context);
+            @ssg_policy_context = ();
+        }
+        $_ =~ s{\s+name\ \"[^"]*\"}{};    # 删除策略名称，只使用策略ID
+        push @ssg_policy_context, $_;
+        next;
+    }
+    elsif (/\bset policy id\b/) {         # 是否禁用策略
+        push @ssg_policy_context, $_;
+        next;
+    }
+    elsif (/\b(set service|set dst-address|set src-address)\b/) {
+        push @ssg_policy_context, $_;     # 策略中间内容也保存到数组
+        next;
+    }
+    elsif (/\bexit\b/) {                  # 策略结束,调用set_policy处理
+        set_policy(@ssg_policy_context);
+        @ssg_policy_context = ();         # 每条策略处理完后清空数组
         next;
     }
 }
