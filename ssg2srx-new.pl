@@ -379,10 +379,6 @@ sub set_screen {
     }
 }
 
-sub set_nat {
-
-}
-
 # 设置静态nat
 sub set_mip {
 
@@ -519,7 +515,7 @@ sub set_policy {
             $dst_nat_toggle       = 1;
             $dst_nat_real_address = $&;
         }
-        elsif (/\b(?:nat src dip-id\s+\d+\s+dst ip\s)$RE{net}{IPv4}\b/)
+        elsif (/\b(?:nat src dip-id\s+\d+\s+dst ip\s+)$RE{net}{IPv4}\b/)
         {                                                     # 同时配置DIP和目的nat
             $dip_toggle           = 1;
             $dst_nat_toggle       = 1;
