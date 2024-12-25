@@ -444,7 +444,7 @@ sub set_dip {
     }
     if ( $ssg_config_line =~ /\bfix-port\b/ ) {
         $dip_pool{$dip_id} =
-          ("$start_dip_address to $stop_dip_address fix-port");    # 不进行PAT
+          ("$start_dip_address to $stop_dip_address fix-port");    # 不进行端口转换
     }
     else {
         $dip_pool{$dip_id} = ("$start_dip_address to $stop_dip_address");
@@ -469,9 +469,12 @@ sub set_nat_dst {
 # 设置策略
 sub set_policy {
     my @ssg_config_line = "@_";
-    my ( $action, $log, $src_nat, $dst_nat, $policy_toggle, $src_global_toggle,
-        $dst_global_toggle )
-      = ();
+    my (
+        $action,        $log,               $dip_toggle,
+        $vip_toogle,    $src_nat_toggle,    $dst_nat_toggle,
+        $policy_toggle, $src_global_toggle, $dst_global_toggle,
+        $dst_nat_real_address
+    ) = ();
 
     # 获取策略元素
     my (
@@ -509,20 +512,65 @@ sub set_policy {
         }
         elsif (/\bset policy id disable\b/) {                   # 是否禁用策略
             $policy_toggle = ( split /\s+/ )[-1];
+            next;
         }
-        elsif (/\bnat src dst ip\b/) {                          # 同时配置源nat和目的nat
-
+        elsif (/\b(?:nat src dst ip\s+)$RE{net}{IPv4}\b/) {   # 同时配置接口源nat和目的nat
+            $src_nat_toggle       = 1;
+            $dst_nat_toggle       = 1;
+            $dst_nat_real_address = $&;
         }
-        elsif (/\bnat src dip-id\s+\d+\s+dst ip\b/) {           # 同时配置DIP和目的nat
-
+        elsif (/\b(?:nat src dip-id\s+\d+\s+dst ip\s)$RE{net}{IPv4}\b/)
+        {                                                     # 同时配置DIP和目的nat
+            $dip_toggle           = 1;
+            $dst_nat_toggle       = 1;
+            $dst_nat_real_address = $&;
         }
-        elsif (/\bnat src\b/) {
-
+        elsif (/\bnat src dip-id\s+\d+\b/) {                  # 只有DIP
+            $dip_toggle     = 1;
+            $dst_nat_toggle = 1;
         }
-        elsif (/\bVIP\(.*\)\b/) {
-
+        elsif (/\bnat src\b/) {                               # 接口源nat
+            $src_nat_toggle = 1;
+        }
+        elsif (/\bVIP\(.*\)\b/) {                             # 只有目的nat
+            $vip_toogle = 1;
         }
     }
+
+    # 先进行目的nat，再进行源nat
+    set_nat_dst( $policy_id, $src_zone, $dst_zone, @src_address, @dst_address )
+      if ($dst_nat_toggle);
+    set_vip( $policy_id, $src_zone, $dst_zone, @src_address, @dst_address )
+      if ($vip_toogle);
+    set_nat_src( $policy_id, $src_zone, $dst_zone, @src_address, @dst_address )
+      if ($src_nat_toggle);
+    set_dip( $policy_id, $src_zone, $dst_zone, @src_address, @dst_address )
+      if ($dip_toggle);
+
+    # 输出策略
+    print
+"set security policies from-zone $src_zone to-zone $dst_zone policy $src_zone-to-$dst_zone-$policy_id match source-address [ @src_address ]\n";
+    print
+"set security policies from-zone $src_zone to-zone $dst_zone policy $src_zone-to-$dst_zone-$policy_id match source-address [ @dst_address ]\n";
+    print
+"set security policies from-zone $src_zone to-zone $dst_zone policy $src_zone-to-$dst_zone-$policy_id match application [ @dst_address ]\n";
+    print
+"set security policies from-zone $src_zone to-zone $dst_zone policy $src_zone-to-$dst_zone-$policy_id then $action\n";
+
+    # 配置log
+    if ( $log eq "session-init|session-close" ) {
+        print
+"set security policies from-zone $src_zone to-zone $dst_zone policy $src_zone-to-$dst_zone-$policy_id then log $log\n";
+    }
+    elsif ( $log eq "log" ) {
+        print
+"set security policies from-zone $src_zone to-zone $dst_zone policy $src_zone-to-$dst_zone-$policy_id then log session-init\n";
+    }
+
+    # 禁用策略
+    print
+"deactive security policies from-zone $src_zone to-zone $dst_zone policy $src_zone-to-$dst_zone-$policy_id\n"
+      if ($policy_toggle);
 }
 
 # 中文翻译成拼音
@@ -796,4 +844,5 @@ __END__
 $lpm=>{
     {route1 => zone1},
     {route2 => zone2},
+}
 }
