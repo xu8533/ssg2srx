@@ -20,14 +20,14 @@ use Regexp::Common qw(net time);
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 
 # 定义变量
-my $workbook;              # 保存excel文件
-my $worksheet;             # 保存excel文件中的工作表
-my $excel_row = 0;         # excel对比文件行数
-my $lpm;                   # 用于查找ip所在zone
-my @ssg_config_file;       # 保存ssg配置文件，不赋值，否则正文循环时会清空配置
-my @ssg_policy_context;    # 临时保存ssg策略单条策略内容
-my %lpm_pairs;             # 保存接口与zone的映射关系，用于设置路由下一跳为接口时对应zone
-my %services;              # 保存ssg服务名与srx服务名的映射关系
+my $workbook;                   # 保存excel文件
+my $worksheet;                  # 保存excel文件中的工作表
+my $excel_row = 0;              # excel对比文件行数
+my $lpm;                        # 用于查找ip所在zone
+my @ssg_config_file;            # 保存ssg配置文件，不赋值，否则正文循环时会清空配置
+my @ssg_policy_context = ();    # 临时保存ssg策略单条策略内容
+my %lpm_pairs;                  # 保存接口与zone的映射关系，用于设置路由下一跳为接口时对应zone
+my %services;                   # 保存ssg服务名与srx服务名的映射关系
 
 # 保存命令选项值
 our ( $opt_c, $opt_d, $opt_o, $opt_s ) = ();
@@ -454,6 +454,10 @@ sub set_vip {
 
 # 设置源nat, 策略中的nat src
 sub set_nat_src {
+    my (
+        $nat_src_policy_id, $nat_src_zone, $nat_src_dst_zone,
+        @nat_src_address,   @nat_src_dst_address
+    ) = "@_";
 
 }
 
@@ -464,30 +468,43 @@ sub set_nat_dst {
 
 # 设置策略
 sub set_policy {
-    my @ssg_config_line = "@_";
+
+    # my @ssg_policy_line = @_;
+    # print Dumper (\@ssg_policy_line);
+    my ( @src_address, @dst_address, @service ) = ();
     my (
-        $action,        $log,               $dip_toggle,
-        $vip_toogle,    $src_nat_toggle,    $dst_nat_toggle,
-        $policy_toggle, $src_global_toggle, $dst_global_toggle,
-        $dst_nat_real_address
+        $policy_id,         $src_zone,       $dst_zone,
+        $action,            $log,            $dip_id,
+        $src_nat_toggle,    $dip_toggle,     $vip_toogle,
+        $policy_toggle,     $dst_nat_toggle, $src_global_toggle,
+        $dst_global_toggle, $dst_nat_real_address
     ) = ();
 
+    # 删除元素中的双引号
+    my @policy_context = map { $_ =~ s{"}{}g; $_ } @_;
+
     # 获取策略元素
-    my (
-        $policy_id,   $src_zone,    $dst_zone,
-        @src_address, @dst_address, @service
-    ) = ( ( split /\s+/ )[ 3, 5, 7, 8, 9, 10 ], $ssg_config_line[0] );
+    (
+        $policy_id, $src_zone, $dst_zone, $src_address[0], $dst_address[0],
+        $service[0]
+    ) = ( ( split /\s+/ )[ 3, 5, 7, 8, 9, 10 ], $policy_context[0] );
+
+    print
+"pid is $policy_id\nsrc-zone is $src_zone\ndst-zone is $dst_zone\nsrc-address is @src_address\ndst-address is @dst_address\nservice is @service\n";
 
     # 检测是否为全局策略
     $src_global_toggle = 1 if ( $src_zone eq "Global" );
     $dst_global_toggle = 1 if ( $dst_zone eq "Global" );
 
-    foreach (@ssg_config_line) {
+    foreach (@policy_context) {
+        print "enter for $_\n";
         if ( /\b([Pp]ermit|[Dd]eny)\b/ && /\blog\b/ ) {    # 获取策略动作和日志开启状态
+            print "match log\n";
             $action = ( split /\s+/ )[-2];
             $log    = ( split /\s+/ )[-1];
         }
         elsif (/\b([Pp]ermit|[Dd]eny)\b/) {                # 获取策略动作
+            print "match action\n";
             $action = ( split /\s+/ )[-1];
         }
         elsif (/\bset src-address\b/) {                    # 获取策略源地址
@@ -506,29 +523,31 @@ sub set_policy {
             $log = ( split /\s+/ )[-1];
             next;
         }
-        elsif (/\bset policy id disable\b/) {                   # 是否禁用策略
+        elsif (/\bset policy id \d+ disable\b/) {               # 是否禁用策略
             $policy_toggle = ( split /\s+/ )[-1];
             next;
         }
-        elsif (/\b(?:nat src dst ip\s+)$RE{net}{IPv4}\b/) {   # 同时配置接口源nat和目的nat
+
+        if (/\b(?:nat src dst ip\s+)$RE{net}{IPv4}\b/) {    # 同时配置接口源nat和目的nat
             $src_nat_toggle       = 1;
             $dst_nat_toggle       = 1;
             $dst_nat_real_address = $&;
         }
         elsif (/\b(?:nat src dip-id\s+\d+\s+dst ip\s+)$RE{net}{IPv4}\b/)
-        {                                                     # 同时配置DIP和目的nat
+        {                                                   # 同时配置DIP和目的nat
             $dip_toggle           = 1;
             $dst_nat_toggle       = 1;
             $dst_nat_real_address = $&;
         }
-        elsif (/\bnat src dip-id\s+\d+\b/) {                  # 只有DIP
+        elsif (/\b(?:nat src dip-id\s+)\d+\b/) {            # 只有DIP
             $dip_toggle     = 1;
             $dst_nat_toggle = 1;
+            $dip_id         = $&;
         }
-        elsif (/\bnat src\b/) {                               # 接口源nat
+        elsif (/\bnat src\b/) {                             # 接口源nat
             $src_nat_toggle = 1;
         }
-        elsif (/\bVIP\(.*\)\b/) {                             # 只有目的nat
+        elsif (/\bVIP\(.*\)\b/) {                           # 只有目的nat
             $vip_toogle = 1;
         }
     }
@@ -540,25 +559,31 @@ sub set_policy {
       if ($vip_toogle);
     set_nat_src( $policy_id, $src_zone, $dst_zone, @src_address, @dst_address )
       if ($src_nat_toggle);
-    set_dip( $policy_id, $src_zone, $dst_zone, @src_address, @dst_address )
+    set_dip( $dip_id, $src_zone, $dst_zone, @src_address, @dst_address )
       if ($dip_toggle);
 
     # 输出策略
-    print
-"set security policies from-zone $src_zone to-zone $dst_zone policy $src_zone-to-$dst_zone-$policy_id match source-address [ @src_address ]\n";
-    print
-"set security policies from-zone $src_zone to-zone $dst_zone policy $src_zone-to-$dst_zone-$policy_id match source-address [ @dst_address ]\n";
-    print
-"set security policies from-zone $src_zone to-zone $dst_zone policy $src_zone-to-$dst_zone-$policy_id match application [ @dst_address ]\n";
+    foreach (@src_address) {
+        print
+"set security policies from-zone $src_zone to-zone $dst_zone policy $src_zone-to-$dst_zone-$policy_id match source-address $_\n";
+    }
+    foreach (@dst_address) {
+        print
+"set security policies from-zone $src_zone to-zone $dst_zone policy $src_zone-to-$dst_zone-$policy_id match destination-address $_\n";
+    }
+    foreach (@service) {
+        print
+"set security policies from-zone $src_zone to-zone $dst_zone policy $src_zone-to-$dst_zone-$policy_id match application $_\n";
+    }
     print
 "set security policies from-zone $src_zone to-zone $dst_zone policy $src_zone-to-$dst_zone-$policy_id then $action\n";
 
     # 配置log
-    if ( $log eq "session-init|session-close" ) {
+    if ( ( defined $log ) && ( $log eq "(session-init|session-close)" ) ) {
         print
 "set security policies from-zone $src_zone to-zone $dst_zone policy $src_zone-to-$dst_zone-$policy_id then log $log\n";
     }
-    elsif ( $log eq "log" ) {
+    elsif ( ( defined $log ) && ( $log eq "log" ) ) {
         print
 "set security policies from-zone $src_zone to-zone $dst_zone policy $src_zone-to-$dst_zone-$policy_id then log session-init\n";
     }
@@ -567,6 +592,8 @@ sub set_policy {
     print
 "deactive security policies from-zone $src_zone to-zone $dst_zone policy $src_zone-to-$dst_zone-$policy_id\n"
       if ($policy_toggle);
+
+    return;
 }
 
 # 中文翻译成拼音
@@ -747,29 +774,41 @@ foreach (@ssg_config_file) {
     chomp;
 
     # 将策略内容保存到数组，最后调用set_policy统一处理
-    if (/\bset policy id \d+\b/) {
-        if (@ssg_policy_context) {    # 处理上一条策略只有一行的情况
-            set_policy(@ssg_policy_context);
-            @ssg_policy_context = ();
-        }
+    if ( /\bset policy id \d+\b/ && /\b([Pp]ermit|[Dd]eny)\b/ ) {
+
+        # if (@ssg_policy_context) {    # 处理上一条策略只有一行的情况
+        #     print "1 line policy\n";
+        #     set_policy(@ssg_policy_context);
+        #     print "1 line policy end\n";
+        #     print Dumper( \@ssg_policy_context );
+        #     @ssg_policy_context = ();
+        #     print Dumper( \@ssg_policy_context );
+        # }
+        print "match set policy\n";
         $_ =~ s{\s+name\ \"[^"]*\"}{};    # 删除策略名称，只使用策略ID
+        print "start push\n\n";
         push @ssg_policy_context, $_;
-        next;
+        print Dumper( \@ssg_policy_context );
     }
-    elsif (/\bset policy id\b/) {         # 是否禁用策略
+    elsif (/\bset policy id \d+ disable\b/) {    # 是否禁用策略
+        print "match disable policy\n";
+        print Dumper( \@ssg_policy_context );
         push @ssg_policy_context, $_;
-        next;
     }
     elsif (/\b(set service|set dst-address|set src-address)\b/) {
-        push @ssg_policy_context, $_;     # 策略中间内容也保存到数组
-        next;
+        print "match eletemt\n";
+        print Dumper( \@ssg_policy_context );
+        push @ssg_policy_context, $_;    # 策略中间内容也保存到数组
     }
-    elsif (/\bexit\b/) {                  # 策略结束,调用set_policy处理
+    elsif (/\bexit\b/) {                 # 策略结束,调用set_policy处理
+        print "call set_policy\n";
+        print Dumper( \@ssg_policy_context );
         set_policy(@ssg_policy_context);
-        @ssg_policy_context = ();         # 每条策略处理完后清空数组
-        next;
+        @ssg_policy_context = ()         # 每条策略处理完后清空数组
     }
 }
+
+# set_policy(@ssg_policy_context);
 
 # print Dumper( \%zones_interfaces );
 # print Dumper( \%lpm_pairs );
