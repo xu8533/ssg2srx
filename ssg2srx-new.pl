@@ -184,7 +184,7 @@ set interfaces $href->{$ssg_interface} tunnel destination $ip\n";
 
 # 设置路由
 sub set_route {
-    my @route  = split /\s+/;
+    my @route  = ( split /\s+/ );
     my $length = scalar @route;
     if (   /\bset route\b/
         && /\binterface\b/
@@ -468,9 +468,6 @@ sub set_nat_dst {
 
 # 设置策略
 sub set_policy {
-
-    # my @ssg_policy_line = @_;
-    # print Dumper (\@ssg_policy_line);
     my ( @src_address, @dst_address, @service ) = ();
     my (
         $policy_id,         $src_zone,       $dst_zone,
@@ -487,24 +484,18 @@ sub set_policy {
     (
         $policy_id, $src_zone, $dst_zone, $src_address[0], $dst_address[0],
         $service[0]
-    ) = ( ( split /\s+/ )[ 3, 5, 7, 8, 9, 10 ], $policy_context[0] );
-
-    print
-"pid is $policy_id\nsrc-zone is $src_zone\ndst-zone is $dst_zone\nsrc-address is @src_address\ndst-address is @dst_address\nservice is @service\n";
+    ) = ( ( split /\s+/, $policy_context[0] )[ 3, 5, 7, 8, 9, 10 ] );
 
     # 检测是否为全局策略
     $src_global_toggle = 1 if ( $src_zone eq "Global" );
     $dst_global_toggle = 1 if ( $dst_zone eq "Global" );
 
     foreach (@policy_context) {
-        print "enter for $_\n";
         if ( /\b([Pp]ermit|[Dd]eny)\b/ && /\blog\b/ ) {    # 获取策略动作和日志开启状态
-            print "match log\n";
             $action = ( split /\s+/ )[-2];
             $log    = ( split /\s+/ )[-1];
         }
         elsif (/\b([Pp]ermit|[Dd]eny)\b/) {                # 获取策略动作
-            print "match action\n";
             $action = ( split /\s+/ )[-1];
         }
         elsif (/\bset src-address\b/) {                    # 获取策略源地址
@@ -776,35 +767,22 @@ foreach (@ssg_config_file) {
     # 将策略内容保存到数组，最后调用set_policy统一处理
     if ( /\bset policy id \d+\b/ && /\b([Pp]ermit|[Dd]eny)\b/ ) {
 
-        # if (@ssg_policy_context) {    # 处理上一条策略只有一行的情况
-        #     print "1 line policy\n";
-        #     set_policy(@ssg_policy_context);
-        #     print "1 line policy end\n";
-        #     print Dumper( \@ssg_policy_context );
-        #     @ssg_policy_context = ();
-        #     print Dumper( \@ssg_policy_context );
-        # }
-        print "match set policy\n";
+        if (@ssg_policy_context) {    # 处理上一条策略只有一行的情况
+            set_policy(@ssg_policy_context);
+            @ssg_policy_context = ();
+        }
         $_ =~ s{\s+name\ \"[^"]*\"}{};    # 删除策略名称，只使用策略ID
-        print "start push\n\n";
         push @ssg_policy_context, $_;
-        print Dumper( \@ssg_policy_context );
     }
     elsif (/\bset policy id \d+ disable\b/) {    # 是否禁用策略
-        print "match disable policy\n";
-        print Dumper( \@ssg_policy_context );
         push @ssg_policy_context, $_;
     }
     elsif (/\b(set service|set dst-address|set src-address)\b/) {
-        print "match eletemt\n";
-        print Dumper( \@ssg_policy_context );
-        push @ssg_policy_context, $_;    # 策略中间内容也保存到数组
+        push @ssg_policy_context, $_;            # 策略中间内容也保存到数组
     }
-    elsif (/\bexit\b/) {                 # 策略结束,调用set_policy处理
-        print "call set_policy\n";
-        print Dumper( \@ssg_policy_context );
+    elsif (/\bexit\b/) {                         # 策略结束,调用set_policy处理
         set_policy(@ssg_policy_context);
-        @ssg_policy_context = ()         # 每条策略处理完后清空数组
+        @ssg_policy_context = ()                 # 每条策略处理完后清空数组
     }
 }
 
