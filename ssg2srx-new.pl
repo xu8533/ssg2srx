@@ -455,15 +455,52 @@ sub set_vip {
 # 设置源nat, 策略中的nat src
 sub set_nat_src {
     my (
-        $nat_src_policy_id, $nat_src_zone, $nat_src_dst_zone,
+        $nat_src_policy_id, $nat_src_zone, $nat_dst_zone,
         @nat_src_address,   @nat_src_dst_address
-    ) = "@_";
+    ) = @_;
 
 }
 
 # 设置目的nat, 策略中的nat src
 sub set_nat_dst {
+    my (
+        $policy_id,       $nat_src_zone, $dst_real_ip,
+        $nat_src_address, $nat_dst_address
+    ) = @_;
+    my ( $tmp_dst_real_ip, $pool_name ) = ();
 
+    $tmp_dst_real_ip = $dst_real_ip;
+    $tmp_dst_real_ip =~ tr{\.}{_};
+    $pool_name = "dst-pool-$tmp_dst_real_ip";
+    print
+"set security nat destination rule-set $nat_src_zone from zone $nat_src_zone\n";
+    print "set security nat destination pool $pool_name address $dst_real_ip\n";
+
+    # 控制源地址和目的地址数量，junos nat中每条rule最多支持8个源和目的地址
+    for ( my $n = 0 ; $n <= ( scalar @$nat_src_address ) / 8 ; $n++ ) {
+        for (
+            my $i = 0 ;
+            ( $n * 8 + $i ) < scalar @$nat_src_address && $i <= 7 ;
+            $i++
+          )
+        {
+            print
+"set security nat destination rule-set $nat_src_zone rule dst-$policy_id-$n match source-address $nat_src_address->[$n*8+$i]\n";
+        }
+        for ( my $x = 0 ; $x <= ( scalar @$nat_dst_address ) / 8 ; $x++ ) {
+            for (
+                my $y = 0 ;
+                ( $x * 8 + $y ) < scalar @$nat_dst_address && $y <= 7 ;
+                $y++
+              )
+            {
+                print
+"set security nat destination rule-set $nat_src_zone rule dst-$policy_id-$n match destination-address $nat_dst_address->[$x*8+$y]\n";
+            }
+        }
+        print
+"set security nat destination rule-set $nat_src_zone rule dst-$policy_id-$n then destination-nat pool $pool_name\n";
+    }
 }
 
 # 设置策略
@@ -502,7 +539,7 @@ sub set_policy {
             push @src_address, ( split /\s+/ )[-1];
             next;
         }
-        elsif (/\bset dst-addres\b/) {                     # 获取策略目的地址
+        elsif (/\bset dst-address\b/) {                    # 获取策略目的地址
             push @dst_address, ( split /\s+/ )[-1];
             next;
         }
@@ -522,18 +559,19 @@ sub set_policy {
         if (/\b(?:nat src dst ip\s+)$RE{net}{IPv4}\b/) {    # 同时配置接口源nat和目的nat
             $src_nat_toggle       = 1;
             $dst_nat_toggle       = 1;
-            $dst_nat_real_address = $&;
+            $dst_nat_real_address = ( split /\s+/, $& )[-1];
+            print "dst nat real addr is $dst_nat_real_address\n";
         }
         elsif (/\b(?:nat src dip-id\s+\d+\s+dst ip\s+)$RE{net}{IPv4}\b/)
         {                                                   # 同时配置DIP和目的nat
             $dip_toggle           = 1;
             $dst_nat_toggle       = 1;
-            $dst_nat_real_address = $&;
+            $dst_nat_real_address = ( split /\s+/, $& )[-1];
         }
         elsif (/\b(?:nat src dip-id\s+)\d+\b/) {            # 只有DIP
             $dip_toggle     = 1;
             $dst_nat_toggle = 1;
-            $dip_id         = $&;
+            $dip_id         = ( split /\s+/, $& )[-1];
         }
         elsif (/\bnat src\b/) {                             # 接口源nat
             $src_nat_toggle = 1;
@@ -544,13 +582,15 @@ sub set_policy {
     }
 
     # 先进行目的nat，再进行源nat
-    set_nat_dst( $policy_id, $src_zone, $dst_zone, @src_address, @dst_address )
+    set_nat_dst( $policy_id, $src_zone, $dst_nat_real_address, \@src_address,
+        \@dst_address )
       if ($dst_nat_toggle);
-    set_vip( $policy_id, $src_zone, $dst_zone, @src_address, @dst_address )
+    set_vip( $policy_id, $src_zone, \@src_address, \@dst_address )
       if ($vip_toogle);
-    set_nat_src( $policy_id, $src_zone, $dst_zone, @src_address, @dst_address )
+    set_nat_src( $policy_id, $src_zone, $dst_zone, \@src_address,
+        \@dst_address )
       if ($src_nat_toggle);
-    set_dip( $dip_id, $src_zone, $dst_zone, @src_address, @dst_address )
+    set_dip( $dip_id, $src_zone, $dst_zone, \@src_address, \@dst_address )
       if ($dip_toggle);
 
     # 输出策略
@@ -766,7 +806,6 @@ foreach (@ssg_config_file) {
 
     # 将策略内容保存到数组，最后调用set_policy统一处理
     if ( /\bset policy id \d+\b/ && /\b([Pp]ermit|[Dd]eny)\b/ ) {
-
         if (@ssg_policy_context) {    # 处理上一条策略只有一行的情况
             set_policy(@ssg_policy_context);
             @ssg_policy_context = ();
@@ -855,6 +894,10 @@ __END__
 
 =item $lpm
 $lpm=>{
+    {route1 => zone1},
+    {route2 => zone2},
+}
+}
     {route1 => zone1},
     {route2 => zone2},
 }
