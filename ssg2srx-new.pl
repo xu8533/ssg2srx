@@ -478,6 +478,9 @@ sub set_nat_dst {
 
     # 控制源地址和目的地址数量，junos nat中每条rule最多支持8个源和目的地址
     for ( my $n = 0 ; $n <= ( scalar @$nat_src_address ) / 8 ; $n++ ) {
+        my $index       = 0;    # 目的数组索引
+        my $rule_suffix = 0;    # 规则后缀
+      DST:
         for (
             my $i = 0 ;
             ( $n * 8 + $i ) < scalar @$nat_src_address && $i <= 7 ;
@@ -485,21 +488,22 @@ sub set_nat_dst {
           )
         {
             print
-"set security nat destination rule-set $nat_src_zone rule dst-$policy_id-$n match source-address $nat_src_address->[$n*8+$i]\n";
+"set security nat destination rule-set $nat_src_zone rule dst-$policy_id-$n-$rule_suffix match source-address $nat_src_address->[$n*8+$i]\n";
         }
-        for ( my $x = 0 ; $x <= ( scalar @$nat_dst_address ) / 8 ; $x++ ) {
-            for (
-                my $y = 0 ;
-                ( $x * 8 + $y ) < scalar @$nat_dst_address && $y <= 7 ;
-                $y++
-              )
-            {
-                print
-"set security nat destination rule-set $nat_src_zone rule dst-$policy_id-$n match destination-address $nat_dst_address->[$x*8+$y]\n";
-            }
+
+        # 循环目的地址，每次输出8个，然后再次输出源地址
+        for ( my $y = 0 ; $index < scalar @$nat_dst_address && $y <= 7 ; $y++ )
+        {
+            print
+"set security nat destination rule-set $nat_src_zone rule dst-$policy_id-$n-$rule_suffix match destination-address $nat_dst_address->[$index]\n";
+            $index++;
         }
         print
-"set security nat destination rule-set $nat_src_zone rule dst-$policy_id-$n then destination-nat pool $pool_name\n";
+"set security nat destination rule-set $nat_src_zone rule dst-$policy_id-$n-$rule_suffix then destination-nat pool $pool_name\n";
+        if ( $index < scalar @$nat_dst_address ) {
+            $rule_suffix++;
+            goto DST;
+        }
     }
 }
 
