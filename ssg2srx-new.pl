@@ -505,6 +505,7 @@ sub set_nat_dst {
             goto DST;
         }
     }
+    return "host_$dst_real_ip";
 }
 
 # 设置策略
@@ -564,7 +565,6 @@ sub set_policy {
             $src_nat_toggle       = 1;
             $dst_nat_toggle       = 1;
             $dst_nat_real_address = ( split /\s+/, $& )[-1];
-            print "dst nat real addr is $dst_nat_real_address\n";
         }
         elsif (/\b(?:nat src dip-id\s+\d+\s+dst ip\s+)$RE{net}{IPv4}\b/)
         {                                                   # 同时配置DIP和目的nat
@@ -586,9 +586,13 @@ sub set_policy {
     }
 
     # 先进行目的nat，再进行源nat
-    set_nat_dst( $policy_id, $src_zone, $dst_nat_real_address, \@src_address,
-        \@dst_address )
-      if ($dst_nat_toggle);
+    if ($dst_nat_toggle) {
+        @dst_address =
+          set_nat_dst( $policy_id, $src_zone, $dst_nat_real_address,
+            \@src_address, \@dst_address );
+        print
+"set security zones security-zone $dst_zone address-book address @dst_address $dst_nat_real_address\n";
+    }
     set_vip( $policy_id, $src_zone, \@src_address, \@dst_address )
       if ($vip_toogle);
     set_nat_src( $policy_id, $src_zone, $dst_zone, \@src_address,
@@ -627,8 +631,6 @@ sub set_policy {
     print
 "deactive security policies from-zone $src_zone to-zone $dst_zone policy $src_zone-to-$dst_zone-$policy_id\n"
       if ($policy_toggle);
-
-    return;
 }
 
 # 中文翻译成拼音
