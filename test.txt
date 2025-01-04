@@ -18,29 +18,58 @@ set scheduler "nap_MTUsbstAfO7yKgy" once start 2/11/2020 11:18 stop 2/29/2020 18
 set scheduler "S_time16-19" recurrent sunday start 16:0 stop 19:0
 set scheduler "S_time16-19" recurrent monday start 16:0 stop 19:0
 set scheduler "S_time16-19" recurrent tuesday start 16:0 stop 19:0
-set interface "ethernet0/1" zone "Untrust"
+set zone "Untrust" screen tear-drop
+set zone "Untrust" screen syn-flood
+set zone "Untrust" screen ping-death
+set zone "Untrust" screen ip-filter-src
+set zone "Untrust" screen land
+set interface "ethernet0/1" zone "DMZ"
+set interface "ethernet0/2" zone "DMZ"
+set interface "ethernet0/4" zone "DMZ"
+set interface "ethernet0/7" zone "Untrust"
 set interface "ethernet0/8" zone "Untrust"
 set interface "ethernet0/9" zone "Trust"
 set interface "ethernet1/0" zone "Trust"
+set interface "ethernet1/1" zone "Trust"
 set interface "ethernet1/3" zone "Untrust"
+set interface "ethernet4/1" zone "NM"
+set interface "ethernet0/0" zone "NM"
 set interface "tunnel.1" zone "Untrust"
 set interface "tunnel.2" zone "Untrust"
 set interface ethernet0/1 ip 30.64.254.9/29
 set interface ethernet0/1 route
 set interface ethernet1/0 ip 192.168.5.200/24
 set interface ethernet1/0 route
-set interface ethernet1/3 ip 192.168.15.200/24
-set interface ethernet1/3 route
 set interface ethernet0/8 ip 26.8.224.76/29
 set interface ethernet0/8 route
 set interface ethernet0/9 ip 192.168.100.200/24
 set interface ethernet0/9 route
+set interface ethernet1/3 ip 192.168.15.200/24
+set interface ethernet1/3 route
+set interface ethernet0/2 ip 192.168.200.200/24
+set interface ethernet0/2 route
+set interface ethernet0/4 ip 19.16.200.200/24
+set interface ethernet0/4 route
+set interface ethernet0/7 ip 111.166.210.200/24
+set interface ethernet0/7 route
+set interface ethernet1/1 ip 10.238.200.200/24
+set interface ethernet1/1 route
+set interface ethernet4/1 ip 202.69.18.100/24
+set interface ethernet4/1 route
+set interface ethernet0/0 ip 2.79.98.200/24
+set interface ethernet0/0 route
 set interface tunnel.1 ip unnumbered interface ethernet0/1
 set interface tunnel.1 tunnel encap gre
 set interface tunnel.1 tunnel local-if ethernet0/1 dst-ip 10.15.233.1
 set interface tunnel.2 ip unnumbered interface ethernet0/1
 set interface tunnel.2 tunnel encap gre
 set interface tunnel.2 tunnel local-if ethernet0/1 dst-ip 10.36.100.90
+set interface ethernet1 ip manageable
+set interface ethernet3 ip manageable
+set interface ethernet3 manage ping
+set interface ethernet3 manage ssh
+set interface ethernet3 manage snmp
+set interface ethernet3 manage web
 set interface ethernet1/0 dip 13 192.168.5.199 192.168.5.199
 set interface ethernet0/0 dip 74 192.168.4.197 192.168.4.197
 set interface ethernet0/0 ext ip 192.168.14.145 255.255.255.255 dip 43 192.168.14.145 192.168.14.145
@@ -52,6 +81,19 @@ set interface ethernet1/3 ext ip 192.168.204.195 255.255.255.255 dip 195 192.168
 set interface ethernet1/3 ext ip 10.80.1.13 255.255.255.255 dip 14 10.80.1.13 10.80.1.13
 set interface ethernet1/3 ext ip 192.168.70.161 255.255.255.255 dip 161 192.168.70.161 192.168.70.161
 set interface ethernet1/3 ext ip 192.168.70.163 255.255.255.255 dip 163 192.168.70.163 192.168.70.163
+set interface ethernet0/0 dip 12 10.17.171.2 10.17.171.2
+set interface ethernet0/2 dip 16 172.16.255.16 172.16.255.16
+set interface ethernet0/2 dip 17 172.16.255.15 172.16.255.15
+set interface ethernet0/2 dip 11 172.16.255.246 172.16.255.246
+set interface ethernet0/2 dip 100 172.16.255.247 172.16.255.247
+set interface ethernet0/0 proxy-arp-entry 10.17.171.3 10.17.171.3
+set interface ethernet0/0 proxy-arp-entry 10.17.171.4 10.17.171.4
+set interface ethernet0/0 proxy-arp-entry 10.17.171.190 10.17.171.190
+set interface ethernet0/2 proxy-arp-entry 172.16.255.13 172.16.255.13
+set interface ethernet0/2 proxy-arp-entry 172.16.255.17 172.16.255.17
+set interface ethernet0/2 proxy-arp-entry 172.16.255.18 172.16.255.18
+set interface ethernet0/2 proxy-arp-entry 172.16.255.19 172.16.255.19
+
 set interface "ethernet0/8" mip 10.17.196.254 host 192.168.100.254 netmask 255.255.255.255 vr "trust-vr"
 set interface "ethernet0/8" mip 10.17.196.31 host 192.168.100.172 netmask 255.255.255.255 vr "trust-vr"
 set interface "ethernet0/8" mip 10.17.196.32 host 192.168.100.171 netmask 255.255.255.255 vr "trust-vr"
@@ -155,6 +197,7 @@ set interface "ethernet0/9" mip 192.168.100.230 host 26.8.0.199 netmask 255.255.
 set interface "ethernet0/9" mip 192.168.100.231 host 26.8.1.12 netmask 255.255.255.255 vr "trust-vr"
 set interface "ethernet0/9" mip 192.168.100.232 host 26.8.1.22 netmask 255.255.255.255 vr "trust-vr"
 set interface "ethernet0/9" mip 192.168.100.233 host 26.8.1.62 netmask 255.255.255.255 vr "trust-vr"
+set interface "ethernet0/9" mip 192.168.101.0 host 26.8.2.0 netmask 255.255.255.0 vr "trust-vr"
 set address "cop_ext" "bloomberg1" 208.134.161.0 255.255.255.0
 set address "cop_ext" "bloomberg2" 205.183.246.0 255.255.255.0
 set address "cop_ext" "bloomberg3" 199.105.176.0 255.255.248.0
@@ -171,6 +214,8 @@ set address "Global" "Host_192.168.28.55" 192.168.28.55 255.255.255.255
 set address "Global" "Host_192.168.28.56" 192.168.28.56 255.255.255.255
 set address "Global" "10.15.106.66/32" 10.15.106.66 255.255.255.255
 set address "Global" "NET_10.36.103.0" 10.36.103.0 255.255.255.0
+set address "Global" "test.com" mail.test.com
+set address "Global" "slackware" www.slackware.com
 set address "Untrust" "Host_10.40.132.37" 10.40.132.37 255.255.255.255 "algosec"
 set address "Untrust" "www.baidu.com" www.baidu.com
 set address "Untrust" "ftp.kernel.org" ftp.kernel.org
@@ -216,6 +261,7 @@ set group address "Global" "G_SZ_FW_MGT_mip" mip add "MIP(10.17.196.103)"
 set group address "Global" "G_SZ_FW_MGT_mip" mip add "MIP(10.17.196.104)"
 set group address "Global" "G_SZ_FW_MGT_mip" mip add "MIP(10.17.196.105)"
 set group address "Global" "G_SZ_FW_MGT_mip" mip add "MIP(10.17.196.106)"
+set group address "Global" "G_SZ_FW_MGT_mip" mip add "www.baidu.com"
 set policy id 3009 from "Untrust" to "Global"  "H10.17.192.14" "G_SZ_FW_MGT_mip" "HTTPS" permit log
 set policy id 3009
 set service "SSH"
@@ -267,3 +313,145 @@ set service "tcp_16443"
 set service "tcp_17443"
 set service "tcp_18443"
 exit
+set policy id 21233 name "Trust_2_cop_dmz_289b9" from "Trust" to "cop_dmz"  "Host_10.25.173.46" "H172.168.104.11_QLQH" "TCP-10182" permit
+set policy id 21233
+set service "TCP-10282"
+set service "TCP-10382"
+set service "TCP-10482"
+set service "TCP-10582"
+set service "TCP-10682"
+set service "TCP-10782"
+set service "TCP-10882"
+set service "TCP-10982"
+set service "TCP-11082"
+set service "TCP-11182"
+set service "TCP-11282"
+set service "TCP-11382"
+set service "TCP-11482"
+set service "TCP-11582"
+set service "TCP-11682"
+set service "TCP-11782"
+set service "TCP-11882"
+set service "TCP-11982"
+set service "TCP-12082"
+set service "TCP-12182"
+set service "TCP-12282"
+set service "TCP-12382"
+set service "TCP-12482"
+set service "TCP-21231"
+set service "TCP-21232"
+set service "TCP-21251"
+set service "TCP-21252"
+set service "TCP-21261"
+set service "TCP-22231"
+set service "TCP-22232"
+set service "TCP-22251"
+set service "TCP-22252"
+set service "TCP-22261"
+set service "TCP-31231"
+set service "TCP-31232"
+set service "TCP-31251"
+set service "TCP-31252"
+set service "TCP-31261"
+set service "TCP-31262"
+set service "TCP-32231"
+set service "TCP-32232"
+set service "TCP-32251"
+set service "TCP-32252"
+set service "TCP-32261"
+set service "TCP-32262"
+exit
+set policy id 19982 from "cop_dmz" to "pilot_dmz"  "H172.168.104.16" "H172.16.255.115" "SSH" nat src dip-id 16 permit 
+set policy id 19982
+set dst-address "N172.16.255.116"
+exit
+set policy id 19981 from "cop_dmz" to "pilot_dmz"  "H172.168.104.15" "H172.16.255.115" "SSH" nat src dip-id 17 permit 
+set policy id 19981
+set dst-address "N172.16.255.116"
+exit
+set policy id 61 from "Trust" to "pilot_dmz"  "Net_10.17.0.0" "H10.17.171.190" "tcp_8082" nat src dst ip 172.16.255.150 permit 
+set policy id 61
+set src-address "Net_10.243.244.0_23"
+set src-address "Net_10.243.48.0_22"
+set src-address "Net_10.243.56.0_21"
+set src-address "net_10.243.88.0"
+set service "tcp_8090"
+exit
+set policy id 19808 from "Trust" to "cop_ext"  "H10.17.162.191" "ANY" "ANY" nat src permit 
+set policy id 19808
+set src-address "H10.17.192.111_info"
+set src-address "H10.17.198.60-info"
+set src-address "H26.8.0.164"
+set src-address "H26.8.0.165"
+set src-address "H26.8.0.166"
+set src-address "H26.8.0.167"
+set src-address "H26.8.0.168"
+set src-address "H26.8.0.199"
+set src-address "H26.8.0.25"
+set src-address "H26.8.1.12"
+set src-address "H26.8.1.22"
+set src-address "H26.8.1.62"
+set src-address "manage_group"
+exit
+set policy id 356 from "Trust" to "Untrust"  "host_172.16.220.174" "host_192.168.4.198" "ANY" nat src dip-id 34 dst ip 192.202.1.11 permit log 
+set policy id 356
+set src-address "host_172.16.220.177"
+set log session-init
+exit
+set policy id 355 from "Trust" to "Untrust"  "host_172.16.220.175" "host_192.168.4.198" "ANY" nat src dip-id 35 dst ip 192.202.1.11 permit log 
+set policy id 355
+set src-address "host_172.16.220.177"
+set log session-init
+exit
+
+set route 0.0.0.0/0 interface ethernet0/8 gateway 26.8.224.73
+set route source 192.168.48.13/32 interface ethernet4/1 gateway 202.69.18.1
+set route source 192.168.48.54/32 interface ethernet4/1 gateway 202.69.18.1
+set route source 192.168.48.16/32 interface ethernet4/1 gateway 202.69.18.1
+set route source 192.168.48.19/32 interface ethernet4/1 gateway 202.69.18.1
+set route source 192.168.48.39/32 interface ethernet4/1 gateway 202.69.18.1
+set route source 192.168.48.66/32 interface ethernet4/1 gateway 202.69.18.1
+set route source 192.168.48.76/32 interface ethernet4/1 gateway 202.69.18.1
+set route source 192.168.48.77/32 interface ethernet4/1 gateway 202.69.18.1
+set route 192.168.11.0/24 interface tunnel.2
+set route 192.168.12.0/24 interface tunnel.2
+set route 192.168.13.0/24 interface tunnel.2
+set route 192.168.18.0/24 interface tunnel.2
+set route 192.168.17.0/24 interface tunnel.2
+set route 172.18.0.0/16 interface tunnel.2
+set route 172.21.0.0/16 interface tunnel.1
+set route 172.17.0.0/16 interface tunnel.1
+set route 172.16.0.0/16 interface tunnel.1
+set route 172.39.0.0/16 interface tunnel.1
+set route 10.17.171.190/32 interface ethernet0/2
+set route 10.17.171.3/32 interface ethernet0/2
+set route 10.17.171.4/32 interface ethernet0/2
+set route 172.16.255.246/32 interface ethernet0/0
+set route 172.16.255.13/32 interface ethernet0/0
+set route 172.16.255.17/32 interface ethernet0/0
+set route 172.16.255.18/32 interface ethernet0/0
+set route 172.16.255.19/32 interface ethernet0/4
+set route 172.16.255.15/32 interface ethernet0/4
+set route 172.16.255.16/32 interface ethernet0/4
+set route 30.0.0.0/8 interface ethernet0/0 gateway 10.17.171.254
+set route 10.17.171.2/32 interface ethernet0/2
+
+set interface ethernet0/0 vip interface-ip 80 "HTTP" 10.1.1.1
+set policy id 1 from "Trust" to "DMZ" "Any-IPv4" "VIP(ethernet0/0)" "ANY" permit log
+set policy id 1
+set log session-init
+exit 
+
+set interface ethernet3 vip 1.1.1.10 80 http 10.1.1.10
+set policy from untrust to trust any vip(1.1.1.10) http permit
+
+set service pcanywhere protocol udp src-port 0-65535 dst-port 5631-5631
+set service pcanywhere + tcp src-port 0-65535 dst-port 5632-5632
+set interface ethernet3 vip 1.1.1.3 53 dns 10.1.1.3
+set interface ethernet3 vip 1.1.1.3 + 80 http 10.1.1.4
+set interface ethernet3 vip 1.1.1.3 + 5631 pcanywhere 10.1.1.4
+set interface ethernet3 vip 1.1.1.3 + 5983 ldap 10.1.1.5
+set policy from untrust to trust any vip(1.1.1.3) dns permit
+set policy from untrust to trust any vip(1.1.1.3) http permit
+set policy from untrust to trust any vip(1.1.1.3) ldap permit
+set policy from untrust to trust "Remote Admin" vip(1.1.1.3) pcanywhere permit

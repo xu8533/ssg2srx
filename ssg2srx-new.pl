@@ -462,7 +462,38 @@ sub set_dip {
 "set security nat source rule-set $nat_src_zone-to-$nat_dst_zone to zone $nat_dst_zone\n";
         print
 "set security nat source pool src-pool-$dip_id address $dip_pool{$dip_id}\n";
+        for ( my $n = 0 ; $n <= ( scalar @$nat_src_address ) / 8 ; $n++ ) {
+            my $index       = 0;    # 目的数组索引
+            my $rule_suffix = 0;    # 规则后缀
+          SRC:
+            for (
+                my $i = 0 ;
+                ( $n * 8 + $i ) < scalar @$nat_src_address && $i <= 7 ;
+                $i++
+              )
+            {
+                print
+"set security nat source rule-set $nat_src_zone-to-$nat_dst_zone rule src-$policy_id-$n-$rule_suffix match source-address-name $nat_src_address->[$n*8+$i]\n";
+            }
 
+            # 循环目的地址，每次输出8个，然后再次输出源地址
+            for (
+                my $y = 0 ;
+                $index < scalar @$nat_dst_address && $y <= 7 ;
+                $y++
+              )
+            {
+                print
+"set security nat source rule-set $nat_src_zone-to-$nat_dst_zone rule src-$policy_id-$n-$rule_suffix match destination-address-name $nat_dst_address->[$index]\n";
+                $index++;
+            }
+            print
+"set security nat source rule-set $nat_src_zone-to-$nat_dst_zone rule src-$policy_id-$n-$rule_suffix then source-nat pool src-pool-$dip_id\n";
+            if ( $index < scalar @$nat_dst_address ) {
+                $rule_suffix++;
+                goto SRC;
+            }
+        }
     }
 }
 
@@ -495,14 +526,14 @@ sub set_nat_src {
           )
         {
             print
-"set security nat source rule-set $nat_src_zone-to-$nat_dst_zone rule src-$policy_id-$n-$rule_suffix match source-address $nat_src_address->[$n*8+$i]\n";
+"set security nat source rule-set $nat_src_zone-to-$nat_dst_zone rule src-$policy_id-$n-$rule_suffix match source-address-name $nat_src_address->[$n*8+$i]\n";
         }
 
         # 循环目的地址，每次输出8个，然后再次输出源地址
         for ( my $y = 0 ; $index < scalar @$nat_dst_address && $y <= 7 ; $y++ )
         {
             print
-"set security nat source rule-set $nat_src_zone-to-$nat_dst_zone rule src-$policy_id-$n-$rule_suffix match destination-address $nat_dst_address->[$index]\n";
+"set security nat source rule-set $nat_src_zone-to-$nat_dst_zone rule src-$policy_id-$n-$rule_suffix match destination-address-name $nat_dst_address->[$index]\n";
             $index++;
         }
         print
@@ -541,14 +572,14 @@ sub set_nat_dst {
           )
         {
             print
-"set security nat destination rule-set $nat_src_zone rule dst-$policy_id-$n-$rule_suffix match source-address $nat_src_address->[$n*8+$i]\n";
+"set security nat destination rule-set $nat_src_zone rule dst-$policy_id-$n-$rule_suffix match source-address-name $nat_src_address->[$n*8+$i]\n";
         }
 
         # 循环目的地址，每次输出8个，然后再次输出源地址
         for ( my $y = 0 ; $index < scalar @$nat_dst_address && $y <= 7 ; $y++ )
         {
             print
-"set security nat destination rule-set $nat_src_zone rule dst-$policy_id-$n-$rule_suffix match destination-address $nat_dst_address->[$index]\n";
+"set security nat destination rule-set $nat_src_zone rule dst-$policy_id-$n-$rule_suffix match destination-address-name $nat_dst_address->[$index]\n";
             $index++;
         }
         print
