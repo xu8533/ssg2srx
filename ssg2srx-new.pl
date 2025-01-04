@@ -463,9 +463,10 @@ sub set_dip {
         print
 "set security nat source pool src-pool-$dip_id address $dip_pool{$dip_id}\n";
         for ( my $n = 0 ; $n <= ( scalar @$nat_src_address ) / 8 ; $n++ ) {
-            my $index       = 0;    # 目的数组索引
+            my $yindex      = 0;    # 目的数组索引
+            my $zindex      = 0;    # 端口数组索引
             my $rule_suffix = 0;    # 规则后缀
-          SRC:
+          DIP:
             for (
                 my $i = 0 ;
                 ( $n * 8 + $i ) < scalar @$nat_src_address && $i <= 7 ;
@@ -473,26 +474,47 @@ sub set_dip {
               )
             {
                 print
-"set security nat source rule-set $nat_src_zone-to-$nat_dst_zone rule src-$policy_id-$n-$rule_suffix match source-address-name $nat_src_address->[$n*8+$i]\n";
+"set security nat source rule-set $nat_src_zone-to-$nat_dst_zone rule src-$policy_id-$n-$rule_suffix match source-address $nat_src_address->[$n*8+$i]\n";
             }
 
             # 循环目的地址，每次输出8个，然后再次输出源地址
             for (
                 my $y = 0 ;
-                $index < scalar @$nat_dst_address && $y <= 7 ;
+                $yindex < scalar @$nat_dst_address && $y <= 7 ;
                 $y++
               )
             {
                 print
-"set security nat source rule-set $nat_src_zone-to-$nat_dst_zone rule src-$policy_id-$n-$rule_suffix match destination-address-name $nat_dst_address->[$index]\n";
-                $index++;
+"set security nat source rule-set $nat_src_zone-to-$nat_dst_zone rule src-$policy_id-$n-$rule_suffix match destination-address $nat_dst_address->[$yindex]\n";
+                $yindex++;
+            }
+
+            # 循环目的端口，每次输出8个，然后再次输出源和目的地址
+            for (
+                my $z = 0 ;
+                $zindex < scalar @$application && $z <= 7 ;
+                $z++
+              )
+            {
+                print
+"set security nat source rule-set $nat_src_zone-to-$nat_dst_zone rule src-$policy_id-$n-$rule_suffix match application $application->[$zindex]\n";
+                $zindex++;
             }
             print
-"set security nat source rule-set $nat_src_zone-to-$nat_dst_zone rule src-$policy_id-$n-$rule_suffix then source-nat pool src-pool-$dip_id\n";
-            if ( $index < scalar @$nat_dst_address ) {
+"set security nat source rule-set $nat_src_zone rule src-$policy_id-$n-$rule_suffix then source-nat pool src-pool-$dip_id\n";
+
+            # 检查目的地址和端口是否超过8个
+            if ( $yindex < scalar @$nat_dst_address ) {
+                $zindex = 0;
                 $rule_suffix++;
-                goto SRC;
+                goto DIP;
             }
+            elsif ( $zindex < scalar @$application ) {
+                $yindex = 0;
+                $rule_suffix++;
+                goto DIP;
+            }
+
         }
     }
 }
@@ -516,7 +538,8 @@ sub set_nat_src {
 
     # 控制源地址和目的地址数量，junos nat中每条rule最多支持8个源和目的地址
     for ( my $n = 0 ; $n <= ( scalar @$nat_src_address ) / 8 ; $n++ ) {
-        my $index       = 0;    # 目的数组索引
+        my $yindex      = 0;    # 目的数组索引
+        my $zindex      = 0;    # 端口数组索引
         my $rule_suffix = 0;    # 规则后缀
       SRC:
         for (
@@ -526,19 +549,38 @@ sub set_nat_src {
           )
         {
             print
-"set security nat source rule-set $nat_src_zone-to-$nat_dst_zone rule src-$policy_id-$n-$rule_suffix match source-address-name $nat_src_address->[$n*8+$i]\n";
+"set security nat source rule-set $nat_src_zone-to-$nat_dst_zone rule src-$policy_id-$n-$rule_suffix match source-address $nat_src_address->[$n*8+$i]\n";
         }
 
         # 循环目的地址，每次输出8个，然后再次输出源地址
-        for ( my $y = 0 ; $index < scalar @$nat_dst_address && $y <= 7 ; $y++ )
+        for (
+            my $y = 0 ;
+            $yindex < scalar @$nat_dst_address && $y <= 7 ;
+            $y++
+          )
         {
             print
-"set security nat source rule-set $nat_src_zone-to-$nat_dst_zone rule src-$policy_id-$n-$rule_suffix match destination-address-name $nat_dst_address->[$index]\n";
-            $index++;
+"set security nat source rule-set $nat_src_zone-to-$nat_dst_zone rule src-$policy_id-$n-$rule_suffix match destination-address $nat_dst_address->[$yindex]\n";
+            $yindex++;
+        }
+
+        # 循环目的端口，每次输出8个，然后再次输出源和目的地址
+        for ( my $z = 0 ; $zindex < scalar @$application && $z <= 7 ; $z++ ) {
+            print
+"set security nat source rule-set $nat_src_zone-to-$nat_dst_zone rule src-$policy_id-$n-$rule_suffix match application $application->[$zindex]\n";
+            $zindex++;
         }
         print
-"set security nat source rule-set $nat_src_zone-to-$nat_dst_zone rule src-$policy_id-$n-$rule_suffix then source-nat interface\n";
-        if ( $index < scalar @$nat_dst_address ) {
+"set security nat source rule-set $nat_src_zone rule src-$policy_id-$n-$rule_suffix then source-nat interface\n";
+
+        # 检查目的地址和端口是否超过8个
+        if ( $yindex < scalar @$nat_dst_address ) {
+            $zindex = 0;
+            $rule_suffix++;
+            goto SRC;
+        }
+        elsif ( $zindex < scalar @$application ) {
+            $yindex = 0;
             $rule_suffix++;
             goto SRC;
         }
@@ -548,8 +590,8 @@ sub set_nat_src {
 # 设置目的nat, 策略中的nat src
 sub set_nat_dst {
     my (
-        $policy_id,       $nat_src_zone, $dst_real_ip,
-        $nat_src_address, $nat_dst_address
+        $policy_id,       $nat_src_zone,    $dst_real_ip,
+        $nat_src_address, $nat_dst_address, $application
     ) = @_;
     my ( $tmp_dst_real_ip, $pool_name ) = ();
 
@@ -560,9 +602,10 @@ sub set_nat_dst {
 "set security nat destination rule-set $nat_src_zone from zone $nat_src_zone\n";
     print "set security nat destination pool $pool_name address $dst_real_ip\n";
 
-    # 控制源地址和目的地址数量，junos nat中每条rule最多支持8个源和目的地址
+    # 控制源地址和目的地址和目的端口数量，junos nat中每条rule最多支持8个源和目的地址以及目的端口
     for ( my $n = 0 ; $n <= ( scalar @$nat_src_address ) / 8 ; $n++ ) {
-        my $index       = 0;    # 目的数组索引
+        my $yindex      = 0;    # 目的数组索引
+        my $zindex      = 0;    # 端口数组索引
         my $rule_suffix = 0;    # 规则后缀
       DST:
         for (
@@ -572,19 +615,38 @@ sub set_nat_dst {
           )
         {
             print
-"set security nat destination rule-set $nat_src_zone rule dst-$policy_id-$n-$rule_suffix match source-address-name $nat_src_address->[$n*8+$i]\n";
+"set security nat destination rule-set $nat_src_zone rule dst-$policy_id-$n-$rule_suffix match source-address $nat_src_address->[$n*8+$i]\n";
         }
 
         # 循环目的地址，每次输出8个，然后再次输出源地址
-        for ( my $y = 0 ; $index < scalar @$nat_dst_address && $y <= 7 ; $y++ )
+        for (
+            my $y = 0 ;
+            $yindex < scalar @$nat_dst_address && $y <= 7 ;
+            $y++
+          )
         {
             print
-"set security nat destination rule-set $nat_src_zone rule dst-$policy_id-$n-$rule_suffix match destination-address-name $nat_dst_address->[$index]\n";
-            $index++;
+"set security nat destination rule-set $nat_src_zone rule dst-$policy_id-$n-$rule_suffix match destination-address $nat_dst_address->[$yindex]\n";
+            $yindex++;
+        }
+
+        # 循环目的端口，每次输出8个，然后再次输出源和目的地址
+        for ( my $z = 0 ; $zindex < scalar @$application && $z <= 7 ; $z++ ) {
+            print
+"set security nat destination rule-set $nat_src_zone rule dst-$policy_id-$n-$rule_suffix match application $application->[$zindex]\n";
+            $zindex++;
         }
         print
 "set security nat destination rule-set $nat_src_zone rule dst-$policy_id-$n-$rule_suffix then destination-nat pool $pool_name\n";
-        if ( $index < scalar @$nat_dst_address ) {
+
+        # 检查目的地址和端口是否超过8个
+        if ( $yindex < scalar @$nat_dst_address ) {
+            $zindex = 0;
+            $rule_suffix++;
+            goto DST;
+        }
+        elsif ( $zindex < scalar @$application ) {
+            $yindex = 0;
             $rule_suffix++;
             goto DST;
         }
@@ -673,7 +735,7 @@ sub set_policy {
     if ($dst_nat_toggle) {
         @dst_address =
           set_nat_dst( $policy_id, $src_zone, $dst_nat_real_address,
-            \@src_address, \@dst_address );
+            \@src_address, \@dst_address, \@service );
         print
 "set security zones security-zone $dst_zone address-book address @dst_address $dst_nat_real_address\n";
     }
@@ -887,11 +949,6 @@ BEGIN {
     @ssg_config_file = map { s/^\s+|\s+$//gr } @ssg_config_file;
 }
 
-# 加入lpm，后期ip通过lpm找到zone
-# my $ref = $lpm->dump();
-# print Dumper($ref);
-# print Dumper( \%lpm_pairs );
-
 # 第三次循环，处理策略
 foreach (@ssg_config_file) {
     chomp;
@@ -918,12 +975,6 @@ foreach (@ssg_config_file) {
 }
 
 # set_policy(@ssg_policy_context);
-
-# print Dumper( \%zones_interfaces );
-# print Dumper( \%lpm_pairs );
-# print Dumper( \$lpm );
-# print Dumper( \%services );
-# print Dumper(\%RULE_NUM);
 
 __END__
 =encoding utf8
@@ -988,9 +1039,4 @@ __END__
 $lpm=>{
     {route1 => zone1},
     {route2 => zone2},
-}
-}
-    {route1 => zone1},
-    {route2 => zone2},
-}
 }

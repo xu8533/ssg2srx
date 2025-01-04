@@ -1,0 +1,43 @@
+set policy id 3003 from "DMZ" to "NM" "H26.128.80.34" "H10.17.196.32" "CPD" nat src dst ip 38.0.101.76 permit log
+set policy id 3003
+set src-address "H26.128.80.35"
+set src-address "H26.128.80.36"
+set src-address "H26.128.80.37"
+set src-address "H26.128.80.38"
+set src-address "H26.128.80.39"
+set src-address "H26.128.80.41"
+set src-address "H26.128.80.42"
+set src-address "H26.128.80.43"
+set src-address "H26.128.80.44"
+set src-address "H26.128.80.45"
+set src-address "H26.128.80.46"
+set src-address "H26.128.80.47"
+set src-address "H26.128.80.48"
+set dst-address "MIP(192.168.100.207)"
+set dst-address "MIP(192.168.100.251)"
+set dst-address "MIP(192.168.100.200)"
+set dst-address "MIP(192.168.100.250)"
+set dst-address "MIP(192.168.100.202)"
+set dst-address "MIP(192.168.100.252)"
+set dst-address "MIP(192.168.100.203)"
+set dst-address "MIP(192.168.100.253)"
+set dst-address "MIP(192.168.100.204)"
+set dst-address "MIP(192.168.100.254)"
+set dst-address "MIP(192.168.100.205)"
+set dst-address "MIP(192.168.100.255)"
+set service "CPD_amon"
+set service "CPMI"
+set service "FW1_amon"
+set service "SSH"
+set service "TELNET"
+exit
+
+set policy id 21299 from "cop_dmz" to "Trust" "H172.168.104.11QLQH" "H10.25.151.97" "tcp_15443" permit
+set policy id 21299
+set service "tcp_16443"
+set service "tcp_17443"
+set service "tcp_18443"
+exit
+
+
+
