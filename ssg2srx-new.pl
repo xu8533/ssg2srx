@@ -379,6 +379,11 @@ sub set_screen {
     }
 }
 
+# 控制每条nat源和目的地址数量
+sub nat_term_number_ctl {
+
+}
+
 # 设置静态nat
 sub set_mip {
 
@@ -426,24 +431,38 @@ sub set_mip {
 
 # 设置源nat(dip)
 sub set_dip {
-    my ( $dip_id, $start_dip_address, $stop_dip_address ) = ();
-    my $ssg_config_line = "@_";
+    if ( scalar @_ == 1 ) {    # 一个参数时为dip元素
+        my ( $dip_id, $start_dip_address, $stop_dip_address ) = ();
+        my $ssg_config_line = @_;
 
-    # dip配置分为常规和ext两种模式
-    if ( $ssg_config_line =~ /\bext\b/ ) {    # ext模式
-        ( $dip_id, $start_dip_address, $stop_dip_address ) =
-          ( split /\s+/ )[ 8, -2, -1 ];
+        # dip配置分为常规和ext两种模式
+        if ( $ssg_config_line =~ /\bext\b/ ) {    # ext模式
+            ( $dip_id, $start_dip_address, $stop_dip_address ) =
+              ( split /\s+/ )[ 8, -2, -1 ];
+        }
+        else {                                    # 常规模式
+            ( $dip_id, $start_dip_address, $stop_dip_address ) =
+              ( split /\s+/ )[ 4, -2, -1 ];
+        }
+        if ( $ssg_config_line =~ /\bfix-port\b/ ) {
+            $dip_pool{$dip_id} =
+              ("$start_dip_address to $stop_dip_address fix-port");    # 不进行端口转换
+        }
+        else {
+            $dip_pool{$dip_id} = ("$start_dip_address to $stop_dip_address");
+        }
     }
-    else {                                    # 常规模式
-        ( $dip_id, $start_dip_address, $stop_dip_address ) =
-          ( split /\s+/ )[ 4, -2, -1 ];
-    }
-    if ( $ssg_config_line =~ /\bfix-port\b/ ) {
-        $dip_pool{$dip_id} =
-          ("$start_dip_address to $stop_dip_address fix-port");    # 不进行端口转换
-    }
-    else {
-        $dip_pool{$dip_id} = ("$start_dip_address to $stop_dip_address");
+    elsif ( scalar @_ == 7 ) {    # 七个参数时为dip配置
+        my ( $policy_id, $dip_id, $nat_src_zone, $nat_dst_zone,
+            $nat_src_address, $nat_dst_address, $application )
+          = @_;
+        print
+"set security nat source rule-set $nat_src_zone-to-$nat_dst_zone from zone $nat_src_zone\n";
+        print
+"set security nat source rule-set $nat_src_zone-to-$nat_dst_zone to zone $nat_dst_zone\n";
+        print
+"set security nat source pool src-pool-$dip_id address $dip_pool{$dip_id}\n";
+
     }
 }
 
@@ -455,10 +474,44 @@ sub set_vip {
 # 设置源nat, 策略中的nat src
 sub set_nat_src {
     my (
-        $nat_src_policy_id, $nat_src_zone, $nat_dst_zone,
-        @nat_src_address,   @nat_src_dst_address
+        $policy_id,       $nat_src_zone,    $nat_dst_zone,
+        $nat_src_address, $nat_dst_address, $application
     ) = @_;
 
+    print
+"set security nat source rule-set $nat_src_zone-to-$nat_dst_zone from zone $nat_src_zone\n";
+    print
+"set security nat source rule-set $nat_src_zone-to-$nat_dst_zone to zone $nat_dst_zone\n";
+
+    # 控制源地址和目的地址数量，junos nat中每条rule最多支持8个源和目的地址
+    for ( my $n = 0 ; $n <= ( scalar @$nat_src_address ) / 8 ; $n++ ) {
+        my $index       = 0;    # 目的数组索引
+        my $rule_suffix = 0;    # 规则后缀
+      SRC:
+        for (
+            my $i = 0 ;
+            ( $n * 8 + $i ) < scalar @$nat_src_address && $i <= 7 ;
+            $i++
+          )
+        {
+            print
+"set security nat source rule-set $nat_src_zone-to-$nat_dst_zone rule src-$policy_id-$n-$rule_suffix match source-address $nat_src_address->[$n*8+$i]\n";
+        }
+
+        # 循环目的地址，每次输出8个，然后再次输出源地址
+        for ( my $y = 0 ; $index < scalar @$nat_dst_address && $y <= 7 ; $y++ )
+        {
+            print
+"set security nat source rule-set $nat_src_zone-to-$nat_dst_zone rule src-$policy_id-$n-$rule_suffix match destination-address $nat_dst_address->[$index]\n";
+            $index++;
+        }
+        print
+"set security nat source rule-set $nat_src_zone-to-$nat_dst_zone rule src-$policy_id-$n-$rule_suffix then source-nat interface\n";
+        if ( $index < scalar @$nat_dst_address ) {
+            $rule_suffix++;
+            goto SRC;
+        }
+    }
 }
 
 # 设置目的nat, 策略中的nat src
@@ -593,12 +646,14 @@ sub set_policy {
         print
 "set security zones security-zone $dst_zone address-book address @dst_address $dst_nat_real_address\n";
     }
-    set_vip( $policy_id, $src_zone, \@src_address, \@dst_address )
-      if ($vip_toogle);
+    if ($vip_toogle) {
+        set_vip( $policy_id, $src_zone, \@src_address, \@dst_address );
+    }
     set_nat_src( $policy_id, $src_zone, $dst_zone, \@src_address,
-        \@dst_address )
+        \@dst_address, \@service )
       if ($src_nat_toggle);
-    set_dip( $dip_id, $src_zone, $dst_zone, \@src_address, \@dst_address )
+    set_dip( $policy_id, $dip_id, $src_zone, $dst_zone, \@src_address,
+        \@dst_address, \@service )
       if ($dip_toggle);
 
     # 输出策略
