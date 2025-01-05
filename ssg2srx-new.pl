@@ -501,7 +501,7 @@ sub set_dip {
                 $zindex++;
             }
             print
-"set security nat source rule-set $nat_src_zone rule src-$policy_id-$n-$rule_suffix then source-nat pool src-pool-$dip_id\n";
+"set security nat source rule-set $nat_src_zone-to-$nat_dst_zone rule src-$policy_id-$n-$rule_suffix then source-nat pool src-pool-$dip_id\n";
 
             # 检查目的地址和端口是否超过8个
             if ( $yindex < scalar @$nat_dst_address ) {
@@ -514,7 +514,6 @@ sub set_dip {
                 $rule_suffix++;
                 goto DIP;
             }
-
         }
     }
 }
@@ -571,7 +570,7 @@ sub set_nat_src {
             $zindex++;
         }
         print
-"set security nat source rule-set $nat_src_zone rule src-$policy_id-$n-$rule_suffix then source-nat interface\n";
+"set security nat source rule-set $nat_src_zone-to-$nat_dst_zone rule src-$policy_id-$n-$rule_suffix then source-nat interface\n";
 
         # 检查目的地址和端口是否超过8个
         if ( $yindex < scalar @$nat_dst_address ) {
