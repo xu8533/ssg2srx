@@ -26,6 +26,7 @@ my $excel_row = 0;              # excel对比文件行数
 my $lpm;                        # 用于查找ip所在zone
 my @ssg_config_file;            # 保存ssg配置文件，不赋值，否则正文循环时会清空配置
 my @ssg_policy_context = ();    # 临时保存ssg策略单条策略内容
+my %address_book;               # 保存ssg地址簿名与srx地址簿名的映射关系
 my %lpm_pairs;                  # 保存接口与zone的映射关系，用于设置路由下一跳为接口时对应zone
 my %services;                   # 保存ssg服务名与srx服务名的映射关系
 
@@ -51,12 +52,13 @@ my %dip_pool;
 my %RULE_NUM;
 
 my %srx_application_port_number = (
-    http     => 80,
-    https    => 443,
-    ftp      => 21,
-    ssh      => 22,
-    mail     => 25,
-    telnet   => 23,
+
+    # http     => 80,
+    # https    => 443,
+    # ftp      => 21,
+    # ssh      => 22,
+    # mail     => 25,
+    # telnet   => 23,
     Terminal => 3389,
     SNMP     => "161 to 162",
 );
@@ -65,7 +67,7 @@ my %srx_application_port_number = (
 sub usage {
     my $err = shift and select STDERR;
     print
-"usage: $0 [-c ssg_config_file] [-d compare_file] [-o file] [-s srx_to_ssg_service_mapping_table.xlsx] ssg_file\n",
+"usage: $0 [-c ssg_config_file] [-d compare_file] [-o file] [-s srx_to_ssg_service_mapping_table.xlsx] ssg_config_file\n",
       "\t-c --config    file        ssg configuration file\n",
       "\t-d --compare   file        ssg and srx configuration compare file\n",
       "\t-o --output    file        srx configuration output file\n",
@@ -98,10 +100,10 @@ sub set_zone_interface {
     $ssg_interface =~ s{"}{}g;
     $zone          =~ s{"}{}g;
 
-    chomp( my $srx_interface = <STDIN> );          # 用户输入新的srx接口
-    push @{ $zones_interfaces{$zone} }, { $ssg_interface => $srx_interface };
-    $ssg_srx_interface{$ssg_interface} = $srx_interface;
-    $lpm_pairs{"$ssg_interface"}       = $zone;    # 接口和zone映射（某些路由的下一跳是ssg接口）
+    chomp( my $srx_interface = <STDIN> );    # 用户输入新的srx接口
+    $zones_interfaces{$zone}->{$ssg_interface} = $srx_interface;
+    $ssg_srx_interface{$ssg_interface}         = $srx_interface;
+    $lpm_pairs{"$ssg_interface"} = $zone;    # 接口和zone映射（某些路由的下一跳是ssg接口）
 
     return $zone;
 }
@@ -131,51 +133,46 @@ sub set_interface_ip_zone {
 
         # 查找具体zone下的每一个数组，
         # 如果找到ssg接口对应的srx接口则输出相关设置并跳出循环
-        foreach my $href ( @{ $zones_interfaces{$zone} } ) {
-            if ( exists $href->{$ssg_interface} ) {
-                unless ( $href->{$ssg_interface} =~ m{\bgr-0\/0\/0\.\d+\b} )
-                {    # 处理非tunnel接口
+        if ( exists $zones_interfaces{$zone}->{$ssg_interface} ) {
+            unless ( $zones_interfaces{$zone}->{$ssg_interface} =~
+                m{\bgr-0\/0\/0\.\d+\b} )
+            {    # 处理非tunnel接口
+                print
+"set interfaces $zones_interfaces{$zone}->{$ssg_interface} family inet address $ip\n";
+                print
+"set security zones security-zone $zone interfaces $zones_interfaces{$zone}->{$ssg_interface}\n";
+
+                # 将ip绑定到ssg接口的简写方式
+                $zones_interfaces{$zone}->{$ssg_interface} =
+                  { $zones_interfaces{$zone}->{$ssg_interface} => $ip };
+                $ssg_interface_ip{$ssg_interface} = $ip;
+
+                $lpm->add( "$ip", "$zone" );    # 添加接口ip和zone映射
+                last START;
+            }
+            else {                              # 处理tunnel接口
+                if ( $ssg_config_line =~ /\bip unnumbered\b/ ) {
                     print
-"set interfaces $href->{$ssg_interface} family inet address $ip\n";
-                    print
-"set security zones security-zone $zone interfaces $href->{$ssg_interface}\n";
-
-                    # 将ip绑定到srx接口
-                    # my $srx_interface = $href->{$ssg_interface};
-                    # $href->{$ssg_interface} = { $srx_interface => $ip };
-
-                    # 将ip绑定到ssg接口的简写方式
-                    $href->{$ssg_interface} =
-                      { $href->{$ssg_interface} => $ip };
-                    $ssg_interface_ip{$ssg_interface} = $ip;
-
-                    $lpm->add( "$ip", "$zone" );    # 添加接口ip和zone映射
+"set interfaces $zones_interfaces{$zone}->{$ssg_interface} family inet unnumbered-address $ssg_srx_interface{$ip}\n";
                     last START;
                 }
-                else {                              # 处理tunnel接口
-                    if ( $ssg_config_line =~ /\bip unnumbered\b/ ) {
-                        print
-"set interfaces $href->{$ssg_interface} family inet unnumbered-address $ssg_srx_interface{$ip}\n";
-                        last START;
-                    }
-                    elsif ( $ssg_config_line =~ /\bdst-ip\b/ ) {
-                        my ($source) =
-                          ( ( split /\s+/ )[-3], $ssg_config_line );
-                        if ( $source =~ /$RE{net}{IPv4}/ ) {    # source为ip
-                            print "
-set interfaces $href->{$ssg_interface} tunnel source $source\n";
-                        }
-                        else {                                  # source为ssg接口
-                            my $source_ip =
-                              NetAddr::IP->new( $ssg_interface_ip{$source} );
-                            print
-"set interfaces $href->{$ssg_interface} tunnel source ",
-                              $source_ip->addr;
-                        }
+                elsif ( $ssg_config_line =~ /\bdst-ip\b/ ) {
+                    my ($source) =
+                      ( ( split /\s+/ )[-3], $ssg_config_line );
+                    if ( $source =~ /$RE{net}{IPv4}/ ) {    # source为ip
                         print "
-set interfaces $href->{$ssg_interface} tunnel destination $ip\n";
-                        last START;
+set interfaces $zones_interfaces{$zone}->{$ssg_interface} tunnel source $source\n";
                     }
+                    else {                                  # source为ssg接口
+                        my $source_ip =
+                          NetAddr::IP->new( $ssg_interface_ip{$source} );
+                        print
+"set interfaces $zones_interfaces{$zone}->{$ssg_interface} tunnel source ",
+                          $source_ip->addr;
+                    }
+                    print "
+set interfaces $zones_interfaces{$zone}->{$ssg_interface} tunnel destination $ip\n";
+                    last START;
                 }
             }
         }
@@ -214,32 +211,30 @@ sub set_route {
             print
 "set firewall family inet filter fbf_$gateway term $source from source-address $source\n";
             print
-"set firewall family inet filter fbf_$gateway term $source from source-interface $ssg_srx_interface{source_interface}\n";
+"set firewall family inet filter fbf_$gateway term $source from source-interface $ssg_srx_interface{$source_interface}\n";
         }
         else {                       # 源路由
             my ( $source, $gateway ) = ( split /\s+/ )[ 3, 7 ];
             print
-              " set firewall family inet filter fbf_ $gateway term $source from
-          source-address $source\n ";
+"set firewall family inet filter fbf_$gateway term $source from source-address $source\n";
             print
-              " set firewall family inet filter fbf_ $gateway term $source then
-          next -hop $gateway\n ";
+"set firewall family inet filter fbf_$gateway term $source then next-hop $gateway\n";
         }
     }
     elsif ( /\bset route\b/ && /\b(interface|gateway)\b/ && $length == 5 ) {
         my ( $droute, $gateway ) = ( split /\s+/ )[ 2, 4 ];
         if ( $gateway =~ /$RE{net}{IPv4}/ ) {    # 下一跳是ip
             print
-              " set routing-options static route $droute next -hop $gateway\n ";
-            my $zone = $lpm->lookup("$gateway ");
-            $lpm->add( "$droute ", "$zone " );
+              "set routing-options static route $droute next-hop $gateway\n";
+            my $zone = $lpm->lookup("$gateway");
+            $lpm->add( "$droute", "$zone" );
         }
         else {                                   # 下一跳是接口
             my $srx_interface_gateway = $ssg_srx_interface{$gateway};
             print
-" set routing-options static route $droute next -hop $srx_interface_gateway\n ";
-            my $zone = $lpm_pairs{"$gateway "};
-            $lpm->add( "$droute ", "$zone " );
+"set routing-options static route $droute next-hop $srx_interface_gateway\n";
+            my $zone = $lpm_pairs{$gateway};
+            $lpm->add( "$droute", "$zone" );
         }
     }
 }
@@ -379,9 +374,57 @@ sub set_screen {
     }
 }
 
-# 控制每条nat源和目的地址数量
+# 控制每条nat源和目的以及服务数量
 sub nat_term_number_ctl {
+    my ( $nat_src_address, $nat_dst_address, $application ) = @_;
+    my %resualt;
+    my $i = 0;
+    for ( my $n = 0 ; $n <= ( scalar @$nat_src_address ) / 8 ; $n++ ) {
+        my $xindex      = 0;    # 源数组索引
+        my $yindex      = 0;    # 目的数组索引
+        my $zindex      = 0;    # 端口数组索引
+        my $last_yindex = 0;    # 前一次目的数组索引
+      TAG:
+        for (
+            my $x = 0 ;
+            ( $n * 8 + $x ) < scalar @$nat_src_address && $x <= 7 ;
+            $x++
+          )
+        {
+            push @{ $resualt{source}->[$i] }, $nat_src_address->[ $n * 8 + $x ];
+        }
 
+        # 循环目的地址，每次输出8个，然后再次输出源地址
+        for (
+            my $y = 0 ;
+            $yindex < scalar @$nat_dst_address && $y <= 7 ;
+            $y++
+          )
+        {
+            push @{ $resualt{destination}->[$i] },
+              $nat_dst_address->[ $yindex++ ];
+        }
+
+        # 循环目的端口，每次输出8个，然后再次输出源和目的地址
+        for ( my $z = 0 ; $zindex < scalar @$application && $z <= 7 ; $z++ ) {
+            push @{ $resualt{service}->[$i] }, $application->[ $zindex++ ];
+        }
+
+        # 检查目的地址和端口是否超过8个
+        if ( $zindex < scalar @$application ) {
+            $yindex = $last_yindex;
+            $i++;
+            goto TAG;
+        }
+        $last_yindex = $yindex;
+        if ( $yindex < scalar @$nat_dst_address ) {
+            $zindex = 0;
+            $i++;
+            goto TAG;
+        }
+    }
+
+    return ( $i, %resualt );
 }
 
 # 设置静态nat
@@ -392,39 +435,37 @@ sub set_mip {
       ( split /\s+/ )[ 2, 4, 6, -3 ];
     $ssg_interface =~ s{"}{}g;
     foreach my $zone ( sort keys %zones_interfaces ) {
-        foreach my $href ( @{ $zones_interfaces{$zone} } ) {
-            if ( exists $href->{$ssg_interface}
-                && ( $netmask eq "255.255.255.255" ) )    # MIP为单个ip
-            {
-                my $tag               = "host";
-                my $tmp_srx_interface = $ssg_srx_interface{$ssg_interface};
-                $tmp_srx_interface =~ s/\./_/;
-                print
-"set security nat static rule-set $zone\_$tmp_srx_interface rule $zone\_$RULE_NUM{$zone}  match destination-address $virtual_ip\n";
-                print
+        if ( exists $zones_interfaces{$zone}->{$ssg_interface}
+            && ( $netmask eq "255.255.255.255" ) )    # MIP为单个ip
+        {
+            my $tag               = "host";
+            my $tmp_srx_interface = $ssg_srx_interface{$ssg_interface};
+            $tmp_srx_interface =~ s/\./_/;
+            print
+"set security nat static rule-set $zone\_$tmp_srx_interface rule $zone\_$RULE_NUM{$zone} match destination-address $virtual_ip\n";
+            print
 "set security nat static rule-set $zone\_$tmp_srx_interface rule $zone\_$RULE_NUM{$zone} then static-nat prefix $real_ip\n";
-                $RULE_NUM{$zone}++;
-                $mip_address_pairs{"$virtual_ip"} = $real_ip;
-                return $virtual_ip, $real_ip, $tag;
-            }
-            elsif ( exists $href->{$ssg_interface}
-                && ( $netmask ne "255.255.255.255" ) )    # MIP为子网
-            {
-                my $tag               = "net";
-                my $tmp_srx_interface = $ssg_srx_interface{$ssg_interface};
-                $tmp_srx_interface =~ s/\./_/;
+            $RULE_NUM{$zone}++;
+            $mip_address_pairs{"$virtual_ip"} = $real_ip;
+            return $virtual_ip, $real_ip, $tag;
+        }
+        elsif ( exists $zones_interfaces{$zone}->{$ssg_interface}
+            && ( $netmask ne "255.255.255.255" ) )    # MIP为子网
+        {
+            my $tag               = "net";
+            my $tmp_srx_interface = $ssg_srx_interface{$ssg_interface};
+            $tmp_srx_interface =~ s/\./_/;
 
-                # 重构地址形式
-                $virtual_ip = NetAddr::IP->new( $virtual_ip, $netmask );
-                $real_ip    = NetAddr::IP->new( $real_ip,    $netmask );
-                print
-"set security nat static rule-set $zone\_$tmp_srx_interface rule $zone\_$RULE_NUM{$zone}  match destination-address $virtual_ip\n";
-                print
+            # 重构地址形式
+            $virtual_ip = NetAddr::IP->new( $virtual_ip, $netmask );
+            $real_ip    = NetAddr::IP->new( $real_ip,    $netmask );
+            print
+"set security nat static rule-set $zone\_$tmp_srx_interface rule $zone\_$RULE_NUM{$zone} match destination-address $virtual_ip\n";
+            print
 "set security nat static rule-set $zone\_$tmp_srx_interface rule $zone\_$RULE_NUM{$zone} then static-nat prefix $real_ip\n";
-                $RULE_NUM{$zone}++;
-                $mip_address_pairs{"$virtual_ip"} = $real_ip;
-                return $virtual_ip, $real_ip, $tag;
-            }
+            $RULE_NUM{$zone}++;
+            $mip_address_pairs{"$virtual_ip"} = $real_ip;
+            return $virtual_ip, $real_ip, $tag;
         }
     }
 }
@@ -461,59 +502,29 @@ sub set_dip {
         print
 "set security nat source rule-set $nat_src_zone-to-$nat_dst_zone to zone $nat_dst_zone\n";
         print
-"set security nat source pool src-pool-$dip_id address $dip_pool{$dip_id}\n";
-        for ( my $n = 0 ; $n <= ( scalar @$nat_src_address ) / 8 ; $n++ ) {
-            my $yindex      = 0;    # 目的数组索引
-            my $zindex      = 0;    # 端口数组索引
-            my $rule_suffix = 0;    # 规则后缀
-          DIP:
-            for (
-                my $i = 0 ;
-                ( $n * 8 + $i ) < scalar @$nat_src_address && $i <= 7 ;
-                $i++
-              )
-            {
-                print
-"set security nat source rule-set $nat_src_zone-to-$nat_dst_zone rule src-$policy_id-$n-$rule_suffix match source-address $nat_src_address->[$n*8+$i]\n";
-            }
+"set security nat source pool dip-pool-$dip_id address $dip_pool{$dip_id}\n";
 
-            # 循环目的地址，每次输出8个，然后再次输出源地址
-            for (
-                my $y = 0 ;
-                $yindex < scalar @$nat_dst_address && $y <= 7 ;
-                $y++
-              )
-            {
-                print
-"set security nat source rule-set $nat_src_zone-to-$nat_dst_zone rule src-$policy_id-$n-$rule_suffix match destination-address $nat_dst_address->[$yindex]\n";
-                $yindex++;
-            }
+        # 分裂源，目的，端口
+        my ( $index, %sort_nat_term ) =
+          nat_term_number_ctl( $nat_src_address, $nat_dst_address,
+            $application );
 
-            # 循环目的端口，每次输出8个，然后再次输出源和目的地址
-            for (
-                my $z = 0 ;
-                $zindex < scalar @$application && $z <= 7 ;
-                $z++
-              )
-            {
+        # 输出nat rule
+        for ( my $i = 0 ; $i <= $index ; $i++ ) {
+            foreach ( @{ $sort_nat_term{source}->[$i] } ) {
                 print
-"set security nat source rule-set $nat_src_zone-to-$nat_dst_zone rule src-$policy_id-$n-$rule_suffix match application $application->[$zindex]\n";
-                $zindex++;
+"set security nat source rule-set $nat_src_zone-to-$nat_dst_zone rule src-$policy_id-$i match source-address $_\n";
+            }
+            foreach ( @{ $sort_nat_term{destination}->[$i] } ) {
+                print
+"set security nat source rule-set $nat_src_zone-to-$nat_dst_zone rule src-$policy_id-$i match destination-address $_\n";
+            }
+            foreach ( @{ $sort_nat_term{service}->[$i] } ) {
+                print
+"set security nat source rule-set $nat_src_zone-to-$nat_dst_zone rule src-$policy_id-$i match application $_\n";
             }
             print
-"set security nat source rule-set $nat_src_zone-to-$nat_dst_zone rule src-$policy_id-$n-$rule_suffix then source-nat pool src-pool-$dip_id\n";
-
-            # 检查目的地址和端口是否超过8个
-            if ( $yindex < scalar @$nat_dst_address ) {
-                $zindex = 0;
-                $rule_suffix++;
-                goto DIP;
-            }
-            elsif ( $zindex < scalar @$application ) {
-                $yindex = 0;
-                $rule_suffix++;
-                goto DIP;
-            }
+"set security nat source rule-set $nat_src_zone-to-$nat_dst_zone rule src-$policy_id-$i then source-nat pool dip-pool-$dip_id\n";
         }
     }
 }
@@ -535,54 +546,26 @@ sub set_nat_src {
     print
 "set security nat source rule-set $nat_src_zone-to-$nat_dst_zone to zone $nat_dst_zone\n";
 
-    # 控制源地址和目的地址数量，junos nat中每条rule最多支持8个源和目的地址
-    for ( my $n = 0 ; $n <= ( scalar @$nat_src_address ) / 8 ; $n++ ) {
-        my $yindex      = 0;    # 目的数组索引
-        my $zindex      = 0;    # 端口数组索引
-        my $rule_suffix = 0;    # 规则后缀
-      SRC:
-        for (
-            my $i = 0 ;
-            ( $n * 8 + $i ) < scalar @$nat_src_address && $i <= 7 ;
-            $i++
-          )
-        {
-            print
-"set security nat source rule-set $nat_src_zone-to-$nat_dst_zone rule src-$policy_id-$n-$rule_suffix match source-address $nat_src_address->[$n*8+$i]\n";
-        }
+    # 分裂源，目的，端口
+    my ( $index, %sort_nat_term ) =
+      nat_term_number_ctl( $nat_src_address, $nat_dst_address, $application );
 
-        # 循环目的地址，每次输出8个，然后再次输出源地址
-        for (
-            my $y = 0 ;
-            $yindex < scalar @$nat_dst_address && $y <= 7 ;
-            $y++
-          )
-        {
+    # 输出nat rule
+    for ( my $i = 0 ; $i <= $index ; $i++ ) {
+        foreach ( @{ $sort_nat_term{source}->[$i] } ) {
             print
-"set security nat source rule-set $nat_src_zone-to-$nat_dst_zone rule src-$policy_id-$n-$rule_suffix match destination-address $nat_dst_address->[$yindex]\n";
-            $yindex++;
+"set security nat source rule-set $nat_src_zone-to-$nat_dst_zone rule src-$policy_id-$i match source-address $_\n";
         }
-
-        # 循环目的端口，每次输出8个，然后再次输出源和目的地址
-        for ( my $z = 0 ; $zindex < scalar @$application && $z <= 7 ; $z++ ) {
+        foreach ( @{ $sort_nat_term{destination}->[$i] } ) {
             print
-"set security nat source rule-set $nat_src_zone-to-$nat_dst_zone rule src-$policy_id-$n-$rule_suffix match application $application->[$zindex]\n";
-            $zindex++;
+"set security nat source rule-set $nat_src_zone-to-$nat_dst_zone rule src-$policy_id-$i match destination-address $_\n";
+        }
+        foreach ( @{ $sort_nat_term{service}->[$i] } ) {
+            print
+"set security nat source rule-set $nat_src_zone-to-$nat_dst_zone rule src-$policy_id-$i match application $_\n";
         }
         print
-"set security nat source rule-set $nat_src_zone-to-$nat_dst_zone rule src-$policy_id-$n-$rule_suffix then source-nat interface\n";
-
-        # 检查目的地址和端口是否超过8个
-        if ( $yindex < scalar @$nat_dst_address ) {
-            $zindex = 0;
-            $rule_suffix++;
-            goto SRC;
-        }
-        elsif ( $zindex < scalar @$application ) {
-            $yindex = 0;
-            $rule_suffix++;
-            goto SRC;
-        }
+"set security nat source rule-set $nat_src_zone-to-$nat_dst_zone rule src-$policy_id-$i then source-nat interface\n";
     }
 }
 
@@ -601,55 +584,28 @@ sub set_nat_dst {
 "set security nat destination rule-set $nat_src_zone from zone $nat_src_zone\n";
     print "set security nat destination pool $pool_name address $dst_real_ip\n";
 
-    # 控制源地址和目的地址和目的端口数量，junos nat中每条rule最多支持8个源和目的地址以及目的端口
-    for ( my $n = 0 ; $n <= ( scalar @$nat_src_address ) / 8 ; $n++ ) {
-        my $yindex      = 0;    # 目的数组索引
-        my $zindex      = 0;    # 端口数组索引
-        my $rule_suffix = 0;    # 规则后缀
-      DST:
-        for (
-            my $i = 0 ;
-            ( $n * 8 + $i ) < scalar @$nat_src_address && $i <= 7 ;
-            $i++
-          )
-        {
-            print
-"set security nat destination rule-set $nat_src_zone rule dst-$policy_id-$n-$rule_suffix match source-address $nat_src_address->[$n*8+$i]\n";
-        }
+    # 分裂源，目的，端口
+    my ( $index, %sort_nat_term ) =
+      nat_term_number_ctl( $nat_src_address, $nat_dst_address, $application );
 
-        # 循环目的地址，每次输出8个，然后再次输出源地址
-        for (
-            my $y = 0 ;
-            $yindex < scalar @$nat_dst_address && $y <= 7 ;
-            $y++
-          )
-        {
+    # 输出nat rule
+    for ( my $i = 0 ; $i <= $index ; $i++ ) {
+        foreach ( @{ $sort_nat_term{source}->[$i] } ) {
             print
-"set security nat destination rule-set $nat_src_zone rule dst-$policy_id-$n-$rule_suffix match destination-address $nat_dst_address->[$yindex]\n";
-            $yindex++;
+"set security nat destination rule-set $nat_src_zone rule dst-$policy_id-$i match source-address $_\n";
         }
-
-        # 循环目的端口，每次输出8个，然后再次输出源和目的地址
-        for ( my $z = 0 ; $zindex < scalar @$application && $z <= 7 ; $z++ ) {
+        foreach ( @{ $sort_nat_term{destination}->[$i] } ) {
             print
-"set security nat destination rule-set $nat_src_zone rule dst-$policy_id-$n-$rule_suffix match application $application->[$zindex]\n";
-            $zindex++;
+"set security nat destination rule-set $nat_src_zone rule dst-$policy_id-$i match destination-address $_\n";
+        }
+        foreach ( @{ $sort_nat_term{service}->[$i] } ) {
+            print
+"set security nat destination rule-set $nat_src_zone rule dst-$policy_id-$i match application $_\n";
         }
         print
-"set security nat destination rule-set $nat_src_zone rule dst-$policy_id-$n-$rule_suffix then destination-nat pool $pool_name\n";
-
-        # 检查目的地址和端口是否超过8个
-        if ( $yindex < scalar @$nat_dst_address ) {
-            $zindex = 0;
-            $rule_suffix++;
-            goto DST;
-        }
-        elsif ( $zindex < scalar @$application ) {
-            $yindex = 0;
-            $rule_suffix++;
-            goto DST;
-        }
+"set security nat destination rule-set $nat_src_zone rule dst-$policy_id-$i then destination-nat pool $pool_name\n";
     }
+
     return "host_$dst_real_ip";
 }
 
@@ -715,12 +671,12 @@ sub set_policy {
         {                                                   # 同时配置DIP和目的nat
             $dip_toggle           = 1;
             $dst_nat_toggle       = 1;
+            $dip_id               = ( split /\s+/, $& )[3];
             $dst_nat_real_address = ( split /\s+/, $& )[-1];
         }
         elsif (/\b(?:nat src dip-id\s+)\d+\b/) {            # 只有DIP
-            $dip_toggle     = 1;
-            $dst_nat_toggle = 1;
-            $dip_id         = ( split /\s+/, $& )[-1];
+            $dip_toggle = 1;
+            $dip_id     = ( split /\s+/, $& )[-1];
         }
         elsif (/\bnat src\b/) {                             # 接口源nat
             $src_nat_toggle = 1;
@@ -894,7 +850,7 @@ BEGIN {
         # 配置接口ip
         elsif (/\bset interface\b/
             && /\bip\b/
-            && !/\bdip\b/
+            && !/\b(dip|vip)\b/
             && /(?:$RE{net}{IPv4})/ )    # 配置常规接口
         {
             set_interface_ip_zone($_);
@@ -910,6 +866,10 @@ BEGIN {
             next;
         }
         elsif ( /\bset interface\b/ && /\bdip\b/ ) {    # 获取DIP的id和pool
+            set_dip($_);
+            next;
+        }
+        elsif ( /\bset interface\b/ && /\bvip\b/ ) {    # 获取DIP的id和pool
             set_dip($_);
             next;
         }
@@ -958,7 +918,7 @@ foreach (@ssg_config_file) {
             set_policy(@ssg_policy_context);
             @ssg_policy_context = ();
         }
-        $_ =~ s{\s+name\ \"[^"]*\"}{};    # 删除策略名称，只使用策略ID
+        $_ =~ s{\s+name\ \"^"*\"}{};    # 删除策略名称，只使用策略ID
         push @ssg_policy_context, $_;
     }
     elsif (/\bset policy id \d+ disable\b/) {    # 是否禁用策略
@@ -973,69 +933,77 @@ foreach (@ssg_config_file) {
     }
 }
 
-# set_policy(@ssg_policy_context);
-
 __END__
 =encoding utf8
 =head2 数据结构
 =item %zones_interfaces
-%zones_interfaces=> {
-    zone1=>[
-              { ssg接口1=>
-                   { srx接口1=> ip }
-              }
-              { ssg接口2=>
-                   { srx接口2=> ip }
-              }
-           ]
-    zone2=>[
-              { ssg接口3=>
-                   { srx接口3 => ip }
-              }
-              { ssg接口4=>
-                   { srx接口4 => ip }
-              }
-           ]
+%zones_interfaces => {
+    zone1 => {
+                ssg接口1 => {
+                                srx接口1=> ip
+                            }
+
+                ssg接口2 => {
+                                srx接口2=> ip
+                            }
+
+           }
+    zone2 => {
+                ssg接口3 => {
+                                srx接口3 => ip
+                            }
+
+                ssg接口4 => {
+                                srx接口4 => ip
+                            }
+
+           }
 }
 
 =item %ssg_interface_ip
-%ssg_interface_ip=> {
-    { ssg接口1 => ip1 },
-    { ssg接口2 => ip2 },
+%ssg_interface_ip =>  {
+                        ssg接口1 => ip1,
+                        ssg接口2 => ip2,
 }
 
 =item %ssg_srx_interface
-%ssg_srx_interface=> {
-    { ssg接口1 => srx接口1 },
-    { ssg接口2 => srx接口2 },
+%ssg_srx_interface => {
+                        ssg接口1 => srx接口1,
+                        ssg接口2 => srx接口2,
 }
 
 =item %mip_address_pairs
-%mip_address_pairs=> {
-    {虚拟地址1 => 实地址1},
-    {虚拟地址2 => 实地址2},
+%mip_address_pairs => {
+                        虚拟地址1 => 实地址1,
+                        虚拟地址2 => 实地址2,
 }
 
 =item %dip_pool
-%dip_pool=>{
-    {pool_id1 => ip1}
-    {pool_id2 => ip2}
+%dip_pool => {
+                pool_id1 => ip1,
+                pool_id2 => ip2,
 }
 
 =item %RULE_NUM
-%RULE_NUM=>{
-    {zone1 => rule_id1}
-    {zone2 => rule_id2}
+%RULE_NUM => {
+                zone1 => rule_id1,
+                zone2 => rule_id2,
 }
 
 =item %lpm_pairs
-%lpm_pairs=>{
-    {ssg接口1 => zone1}
-    {ssg接口2 => zone2}
+%lpm_pairs => {
+                ssg接口1 => zone1
+                ssg接口2 => zone2
 }
 
 =item $lpm
-$lpm=>{
-    {route1 => zone1},
-    {route2 => zone2},
+$lpm => {
+            route1 => zone1,
+            route2 => zone2,
+}
+
+=iterm %address_book
+%address_book => {
+                    host_10.0.0.1 => 10.0.0.1,
+                    net_172.16.0.0/24 => 172.16.0.0/24
 }
