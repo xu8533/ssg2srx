@@ -1,6 +1,6 @@
 # ssg2srx
 
-A perl program that convert juniper screenOS(ssg) config to junOS(srx) format
+A perl program that converts juniper screenOS(ssg) configuration to junOS(srx) configuration
 
 usage:
 perl ssg2srx.pl [-c \<your ssg config file\>] [-d \<compare.xlsx\>] [-s \<service-map.xlsx\>] [\<your ssg config file\>]
