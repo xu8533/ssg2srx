@@ -70,8 +70,10 @@ set interface ethernet3 manage ping
 set interface ethernet3 manage ssh
 set interface ethernet3 manage snmp
 set interface ethernet3 manage web
+set interface ethernet1/0 dip 176 192.168.5.189 192.168.5.189
 set interface ethernet1/0 dip 13 192.168.5.199 192.168.5.199
 set interface ethernet0/0 dip 74 192.168.4.197 192.168.4.197
+set interface ethernet0/0 dip 34 192.168.4.198 192.168.4.198
 set interface ethernet0/0 ext ip 192.168.14.145 255.255.255.255 dip 43 192.168.14.145 192.168.14.145
 set interface ethernet0/0 ext ip 192.168.14.146 255.255.255.255 dip 44 192.168.14.146 192.168.14.146
 set interface ethernet0/0 ext ip 192.168.14.3 255.255.255.255 dip 52 192.168.14.3 192.168.14.3

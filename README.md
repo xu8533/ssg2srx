@@ -7,4 +7,5 @@ perl ssg2srx.pl [-c \<your ssg config file\>] [-d \<compare.xlsx\>] [-s \<servic
 
 source和destination nat中source/destination-address-name地址需在global中定义
 
+- [x] 按每组8个，分解nat条目中的source和destination，application
 - [ ] 解析nat条目中的源和目的地址
