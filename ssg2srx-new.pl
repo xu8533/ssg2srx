@@ -378,47 +378,46 @@ sub set_screen {
 sub nat_term_number_ctl {
     my ( $nat_src_address, $nat_dst_address, $application ) = @_;
     my %resualt;
-    my $i = 0;
-    for ( my $n = 0 ; $n <= ( scalar @$nat_src_address ) / 8 ; $n++ ) {
-        my $xindex      = 0;    # 源数组索引
+    my $i = -1;
+    for ( my $n = 0 ; $n <= ( scalar @$nat_src_address ) / 8 ; $n++ )
+    {    # 源地址按每8个分组
+        $i++;
         my $yindex      = 0;    # 目的数组索引
         my $zindex      = 0;    # 端口数组索引
         my $last_yindex = 0;    # 前一次目的数组索引
       TAG:
         for (
             my $x = 0 ;
-            ( $n * 8 + $x ) < scalar @$nat_src_address && $x <= 7 ;
+            ( $n * 8 + $x ) < scalar @$nat_src_address && $x < 8 ;
             $x++
           )
-        {
+        {                       # 源地址分组内循环
             push @{ $resualt{source}->[$i] }, $nat_src_address->[ $n * 8 + $x ];
         }
 
-        # 循环目的地址，每次输出8个，然后再次输出源地址
-        for (
-            my $y = 0 ;
-            $yindex < scalar @$nat_dst_address && $y <= 7 ;
-            $y++
-          )
+        # 循环目的地址，每次输出8个
+        for ( my $y = 0 ; $yindex < scalar @$nat_dst_address && $y < 8 ; $y++ )
         {
             push @{ $resualt{destination}->[$i] },
               $nat_dst_address->[ $yindex++ ];
         }
 
         # 循环目的端口，每次输出8个，然后再次输出源和目的地址
-        for ( my $z = 0 ; $zindex < scalar @$application && $z <= 7 ; $z++ ) {
+        for ( my $z = 0 ; $zindex < scalar @$application && $z < 8 ; $z++ ) {
             push @{ $resualt{service}->[$i] }, $application->[ $zindex++ ];
         }
 
-        # 检查目的地址和端口是否超过8个
+        # 端口是否已经全部输出，如果没有再次循环，直至输出所有端口
         if ( $zindex < scalar @$application ) {
             $yindex = $last_yindex;
             $i++;
             goto TAG;
         }
-        $last_yindex = $yindex;
-        if ( $yindex < scalar @$nat_dst_address ) {
-            $zindex = 0;
+
+        # 目的是否已经全部输出，如果没有再次循环，直至输出所有端口
+        elsif ( $yindex < scalar @$nat_dst_address ) {
+            $last_yindex = $yindex;
+            $zindex      = 0;
             $i++;
             goto TAG;
         }
