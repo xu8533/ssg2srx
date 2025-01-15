@@ -277,17 +277,21 @@ sub set_scheduler {
 # 设置地址簿
 sub set_address_book {
     my ( $zone, $address_book_name, $ip ) = ( split /\s+/ )[ 2, 3, 4 ];
-    $zone =~ s{"}{}g;    #删除双引号
+    $zone              =~ s{"}{}g;    #删除双引号
+    $address_book_name =~ s{"}{}g;    #删除双引号
     if ( $zone ne "Global" ) {
         unless ( ( $ip =~ /(?!\s+)$RE{net}{domain}/ ) ) {    # 常规zone地址簿
             my $netmask = ( split /\s+/ )[5];
             print
 "set security zones security-zone $zone address-book address $address_book_name "
               . NetAddr::IP->new( $ip, $netmask ) . "\n";
+            $address_book{$address_book_name} =
+              NetAddr::IP->new( $ip, $netmask );
         }
         else {                                               # 匹配域名，支持带空格的域名
             print
 "set security zones security-zone $zone address-book address $address_book_name dns-name $ip\n";
+            $address_book{$address_book_name} = $ip;
         }
     }
     else {                                                   # 全局地址簿
@@ -301,11 +305,14 @@ sub set_address_book {
             print
 "set security zones security-zone $zone address-book address $address_book_name "
               . NetAddr::IP->new( $ip, $netmask ) . "\n";
+            $address_book{$address_book_name} =
+              NetAddr::IP->new( $ip, $netmask );
         }
         else {                                               # 匹配域名，支持带空格的域名
             $zone = $lpm->lookup("0.0.0.0");                 # 域名统一使用默认路由对应的zone
             print
 "set security zones security-zone $zone address-book address $address_book_name dns-name $ip\n";
+            $address_book{$address_book_name} = $ip;
         }
     }
 }
@@ -318,6 +325,8 @@ sub set_address_set {
     if ( $zone ne "Global" ) {    # 非全局地址集合
         print
 "set security zones security-zone $zone address-book address-set $address_set_name address $address_book_name\n";
+
+        # push @{ $address_book{$address_set_name} }, $address_book_name;
     }
     else {                        # 全局地址簿集
         if ( $address_book_name =~ /$RE{net}{IPv4}/ ) {
@@ -333,6 +342,8 @@ sub set_address_set {
         }
         print
 "set security zones security-zone $zone address-book address-set $address_set_name address $address_book_name\n";
+
+        # push @{ $address_book{$address_set_name} }, $address_book_name;
     }
 }
 
@@ -381,7 +392,7 @@ sub nat_term_number_ctl {
     my $i = -1;
     for ( my $n = 0 ; $n <= ( scalar @$nat_src_address ) / 8 ; $n++ )
     {    # 源地址按每8个分组
-        $i++;
+        $i++;                   # 进入下一组时，索引+1
         my $yindex      = 0;    # 目的数组索引
         my $zindex      = 0;    # 端口数组索引
         my $last_yindex = 0;    # 前一次目的数组索引
@@ -392,14 +403,28 @@ sub nat_term_number_ctl {
             $x++
           )
         {                       # 源地址分组内循环
-            push @{ $resualt{source}->[$i] }, $nat_src_address->[ $n * 8 + $x ];
+                                # 解析源和目的地址
+            if ( exists $address_book{ $nat_src_address->[ $n * 8 + $x ] } ) {
+                push @{ $resualt{source}->[$i] },
+                  $address_book{ $nat_src_address->[ $n * 8 + $x ] };
+            }
+            else {
+                push @{ $resualt{source}->[$i] },
+                  $nat_src_address->[ $n * 8 + $x ];
+            }
         }
 
         # 循环目的地址，每次输出8个
         for ( my $y = 0 ; $yindex < scalar @$nat_dst_address && $y < 8 ; $y++ )
         {
-            push @{ $resualt{destination}->[$i] },
-              $nat_dst_address->[ $yindex++ ];
+            if ( exists $address_book{ $nat_dst_address->[$yindex] } ) {
+                push @{ $resualt{destination}->[$i] },
+                  $address_book{ $nat_dst_address->[ $yindex++ ] };
+            }
+            else {
+                push @{ $resualt{destination}->[$i] },
+                  $nat_dst_address->[ $yindex++ ];
+            }
         }
 
         # 循环目的端口，每次输出8个，然后再次输出源和目的地址
@@ -832,7 +857,7 @@ BEGIN {
             set_scheduler($_);
             next;
         }
-        elsif ( /\bset zone\b/ && /\bscreen\b/ ) {
+        elsif ( /\bset zone\b/ && /\bscreen\b/ ) {      # 设置screen选项
             set_screen($_);
             next;
         }
@@ -887,6 +912,7 @@ BEGIN {
             my $real_zone = $lpm->lookup("$strip_ip");
             print
 "set security zones security-zone $real_zone address-book address $mip_type\_$host $host\n";
+            $address_book{ $mip_type . "_" . $host } = $host;
             next;
         }
         elsif (/\bset address\b/) {    # 配置地址簿
@@ -898,13 +924,9 @@ BEGIN {
             next;
         }
     }
-    @ssg_config_file = split( /\n/, $han2pinyin );          # 替换了MIP的实地址，需要重新分割
-
-    # 删除空行
-    @ssg_config_file = grep { !/(^$|^\n$|^\s+$)/ } @ssg_config_file;
-
-    # 删除行首尾空格
-    @ssg_config_file = map { s/^\s+|\s+$//gr } @ssg_config_file;
+    @ssg_config_file = split( /\n/, $han2pinyin );    # 替换了MIP的实地址，需要重新分割
+    @ssg_config_file = grep { !/(^$|^\n$|^\s+$)/ } @ssg_config_file;   # 删除空行
+    @ssg_config_file = map  { s/^\s+|\s+$//gr } @ssg_config_file;      # 删除行首尾空格
 }
 
 # 第三次循环，处理策略
@@ -1001,7 +1023,7 @@ $lpm => {
             route2 => zone2,
 }
 
-=iterm %address_book
+=item %address_book
 %address_book => {
                     host_10.0.0.1 => 10.0.0.1,
                     net_172.16.0.0/24 => 172.16.0.0/24
