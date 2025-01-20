@@ -9,4 +9,4 @@ source和destination nat中source/destination-address-name地址需在global中�
 
 - [x] 按每组8个，分解nat条目中的source和destination，application
 - [x] 解析nat条目中的源和目的地址
-- [ ] 解析nat条目中的address-set
+- [x] 解析nat条目中的address-set
