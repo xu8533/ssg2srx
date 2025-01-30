@@ -2,6 +2,7 @@
 
 # use Cwd 'abs_path';
 # use Excel::Writer::XLSX;
+# use NetAddr::IP::Util qw(inet_aton inet_ntoa);
 use strict;
 use Switch;
 use warnings;
@@ -11,11 +12,10 @@ use Getopt::Long;
 use File::Basename;
 use Spreadsheet::Read;
 use Lingua::Han::PinYin;
-use List::MoreUtils qw(uniq);
 use DateTime::Format::Flexible;
-use Data::Dumper      qw(Dumper);
-use Regexp::Common    qw(net time);
-use NetAddr::IP::Util qw(inet_aton inet_ntoa);
+use List::MoreUtils qw(uniq);
+use Data::Dumper    qw(Dumper);
+use Regexp::Common  qw(net time);
 
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 # rewrite ssg2srx.pl                                                                        #
@@ -53,17 +53,16 @@ my %dip_pool;
 # 保存每个zone的MIP规则id
 my %RULE_NUM;
 
-my %srx_application_port_number = (
-
-    # http     => 80,
-    # https    => 443,
-    # ftp      => 21,
-    # ssh      => 22,
-    # mail     => 25,
-    # telnet   => 23,
-    Terminal => 3389,
-    SNMP     => "161 to 162",
-);
+# my %srx_application_port_number = (
+# http     => 80,
+# https    => 443,
+# ftp      => 21,
+# ssh      => 22,
+# mail     => 25,
+# telnet   => 23,
+# Terminal => 3389,
+# SNMP     => "161 to 162",
+# );
 
 # 使用方法
 sub usage {
@@ -245,34 +244,34 @@ sub set_route {
 sub set_scheduler {
     my @schedulers = split /\s+/;
     switch ( $schedulers[3] ) {
-        case (" once ") {
+        case ("once") {
             my $start_date = $schedulers[5];
             my $start_time = $schedulers[6];
             my $stop_date  = $schedulers[8];
             my $stop_time  = $schedulers[9];
             if ( $start_date =~ $RE{time}{mdy} && $stop_date =~ $RE{time}{mdy} )
             {    # ssg使用美式风格时间，srx使用ISO-8601格式时间，但T分隔符需替换成.号
-                $start_time = "$start_time : 0 ";    # 补足时间，否则会出现无法解析的错误
-                $stop_time  = "$stop_time : 0 ";
+                $start_time = "$start_time:0";    # 补足时间，否则会出现无法解析的错误
+                $stop_time  = "$stop_time:0";
                 $start_date = DateTime::Format::Flexible->parse_datetime(
-                    "$start_date $start_time ");
+                    "$start_date $start_time");
                 $stop_date = DateTime::Format::Flexible->parse_datetime(
-                    "$stop_date $stop_time ");
+                    "$stop_date $stop_time");
                 $start_date =~ s{T}{\.};
                 $stop_date  =~ s{T}{\.};
             }
-            print " set schedulers scheduler $schedulers[2]
-          start-date $start_date stop-date $stop_date\n ";
+            print "set schedulers scheduler $schedulers[2]
+          start-date $start_date stop-date $stop_date\n";
             return;
         }
-        case (" recurrent ") {
+        case ("recurrent") {
             my $some_day   = $schedulers[4];
             my $start_time = $schedulers[6];
             my $stop_time  = $schedulers[8];
             print " set schedulers scheduler $schedulers[2] $some_day start-
           time $start_time stop-time $stop_time \n ";
+            return;
         }
-        return;
     }
 }
 
@@ -319,8 +318,8 @@ sub set_address_book {
 
             # 地址簿和实际地址
             push @{ $address_book{$address_book_name} },
-              NetAddr::IP->new( $ip, $netmask )->addr() . "/"
-              . NetAddr::IP->new( $ip, $netmask )->masklen();
+              NetAddr::IP->new( $ip, $netmask )->addr . "/"
+              . NetAddr::IP->new( $ip, $netmask )->masklen;
         }
         else {                                               # 匹配域名，支持带空格的域名
             $zone = $lpm->lookup("0.0.0.0");                 # 域名统一使用默认路由对应的zone
@@ -405,6 +404,8 @@ sub set_screen {
 sub resolve_address_book_ip {
     my ( $src_address_book, $dst_address_book ) = @_;
     my ( @src_book,         @dst_book )         = ();
+
+    # 解析源地址
     foreach my $address_book_term (@$src_address_book) {
         foreach ( @{ $address_book{$address_book_term} } ) {    # 循环地址簿
             if ( exists $address_book{$_} ) {                   # address-set地址簿
@@ -415,6 +416,8 @@ sub resolve_address_book_ip {
             }
         }
     }
+
+    # 解析目的地址
     foreach my $address_book_term (@$dst_address_book) {
         foreach ( @{ $address_book{$address_book_term} } ) {    # 循环地址簿
             if ( exists $address_book{$_} ) {                   # address-set地址簿
@@ -827,11 +830,6 @@ sub set_policy {
       if ($policy_toggle);
 }
 
-# 中文翻译成拼音
-# sub zh2pinyin {
-#
-# }
-
 # 输入输出报错支持中文
 binmode( STDOUT, ":encoding(gbk)" );
 binmode( STDIN,  ":encoding(gbk)" );
@@ -860,7 +858,7 @@ BEGIN {
         # 读取exel每一行数据，并创建services哈希表
         foreach my $row ( $sheet->{minrow} .. $sheet->{maxrow} ) {
             my @data = $sheet->cellrow($row);
-            $services{ $data[0] } = $data[-1];
+            $services{ $data[1] } = $data[-2];
         }
     }
 
@@ -906,7 +904,7 @@ BEGIN {
         $han2pinyin =~ s{$key}{$value}gm;
     }
 
-    $lpm             = Net::IP::LPM->new();             # 初始化最长前缀匹配
+    $lpm             = Net::IP::LPM->new;               # 初始化最长前缀匹配
     @ssg_config_file = split( /\n/, $han2pinyin );
 
     # 第一次循环，处理接口，zone，ip，路由，nat，服务
@@ -1093,6 +1091,10 @@ $lpm => {
 
 =item %address_book
 %address_book => {
-                    host_10.0.0.1 => 10.0.0.1,
-                    net_172.16.0.0/24 => 172.16.0.0/24
+                    host_10.0.0.1 =>        [ 10.0.0.1, ]
+                    net_172.16.0.0/24 =>    [ 172.16.0.0/24 ]
+                    G_Server_AD => [
+                                            host_10.0.0.1,
+                                            net_172.16.0.0/24
+                    ]
 }
